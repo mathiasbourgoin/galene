@@ -14,12 +14,21 @@ server, media stack, and web client.
 | --- | --- |
 | Room interface | French call controls, a mobile layout, invitation links with expiration controls, and tiles for participants without a camera |
 | Camera and preview | Camera and microphone testing before joining, stronger default background blur, a solid background, and image, animated GIF and WebM backgrounds. A softer, more stable person mask and a concealed image if filtering fails |
-| Participation | An ordered raised-hand queue with a personal position indicator, plus floating emoji reactions and a firework animation when reactions arrive together |
+| Participation | An ordered raised-hand queue with a personal position indicator, floating emoji reactions, a firework animation when reactions arrive together, and sound notifications for arrivals and raised hands |
 | Presentation | Automatic focus on a screen share, a participant filmstrip, a shared pointer, and temporary annotations with presenter-controlled access |
 | Meeting tools | A shared whiteboard in the main view with SVG export, an optional Excalidraw link, polls, supported questions that can be attached to raised hands, and shared decision notes |
-| Access and groups | A waiting room with moderator admission, and temporary breakout rooms with manual or balanced assignments, live occupancy, and a collective return |
+| Access and groups | A waiting room with moderator admission or admission by an existing participant, and temporary breakout rooms with manual or balanced assignments, live occupancy, and a collective return |
 | Connection and captions | An audio-first receive mode with an option to keep screen shares, WebRTC connection diagnostics, and optional [French captions](contrib/galene-stt/README.md) |
-| Meeting portal | Join by room name, invitation URL, or a link carrying a token; browse public rooms; and create a permanent room protected by a guest password or open to the public |
+| Meeting portal | Join by room name, invitation URL, or a link carrying a token; see public room attendance and participant names before joining; and create a permanent room protected by a guest password or open to the public |
+| Companion mode | Join from a second device with its microphone and incoming audio initially muted, with an option to enable audio and use the camera |
+
+To use companion mode, open the same room on the second device and select
+**Rejoindre en mode compagnon** before joining. The second device appears as a
+separate participant. Its sound can be enabled from the call controls.
+
+When creating a room, **Faire patienter les invités** enables admission by a
+participant already in the room. The first participant can enter directly.
+Names shown before joining are available for public rooms.
 
 ### Screenshots
 
