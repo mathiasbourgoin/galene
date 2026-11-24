@@ -2447,6 +2447,8 @@ function setHandRaised(raised, question) {
     const own = queue.find(entry => entry.id === serverConnection.id);
     if(raised === !!own && !question)
         return;
+    if(raised && !own)
+        playMeetingNotice(true);
     // Put a new request after the last visible one. Simultaneous requests
     // can get the same ticket and are ordered consistently by participant ID.
     const last = queue[queue.length - 1];
@@ -4847,6 +4849,12 @@ async function start() {
         console.error(e);
         displayWarning("Couldn't fetch status: " + e);
         groupStatus = {};
+    }
+
+    const present = document.getElementById('prejoin-participants');
+    if(Array.isArray(groupStatus.participants) && groupStatus.participants.length) {
+        present.textContent = 'Déjà présents : ' + groupStatus.participants.join(', ');
+        present.hidden = false;
     }
 
     if(groupStatus.name) {

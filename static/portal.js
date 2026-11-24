@@ -185,6 +185,7 @@ document.getElementById('create-form').addEventListener('submit', async event =>
             headers: { 'Content-Type': 'application/json', 'If-None-Match': '*' },
             body: JSON.stringify({
                 public: isPublic,
+                'member-admission': document.getElementById('member-admission').checked,
                 'allow-anonymous': isPublic,
                 displayName: title || room
             })

@@ -189,9 +189,10 @@ function setWaitingRoom(pending) {
 /** @param {unknown} enabled */
 function reflectLobbyEnabled(enabled) {
     const op = serverConnection?.permissions.includes('op');
-    document.getElementById('lobby-controls').hidden = !op;
+    document.getElementById('lobby-controls').hidden = !op && !groupStatus.memberAdmission;
+    document.getElementById('lobby-toggle').hidden = !op;
     getInputElement('lobby-enabled').checked = enabled === true;
-    if(!op)
+    if(!op && !groupStatus.memberAdmission)
         reflectWaitingGuests([]);
 }
 

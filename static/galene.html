@@ -28,7 +28,7 @@
           <div class="header-sep"></div>
           <section id="lobby-controls" aria-labelledby="lobby-title" hidden>
             <h3 id="lobby-title">Salle d’attente</h3>
-            <label><input id="lobby-enabled" type="checkbox"> Activer l’admission par un modérateur</label>
+            <label id="lobby-toggle"><input id="lobby-enabled" type="checkbox"> Activer l’admission par un modérateur</label>
             <ul id="lobby-list"></ul>
           </section>
           <section id="speaking-queue" aria-labelledby="speaking-queue-title" hidden>
@@ -121,6 +121,7 @@
                     <span class="ux-eyebrow">Avant l’appel</span>
                     <h2 id="prejoin-title">Préparer la réunion</h2>
                     <p>Tu peux rejoindre le salon caméra et micro coupés.</p>
+                    <p id="prejoin-participants" aria-live="polite" hidden></p>
                     <details id="test-camera">
                       <summary>Tester la caméra, le micro et les effets</summary>
                       <p id="test-status" role="status">Le test reste sur cet appareil.</p>

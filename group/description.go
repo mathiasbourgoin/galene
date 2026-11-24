@@ -175,7 +175,8 @@ type Description struct {
 	Comment string `json:"comment,omitempty"`
 
 	// Whether to display the group on the landing page.
-	Public bool `json:"public,omitempty"`
+	Public          bool `json:"public,omitempty"`
+	MemberAdmission bool `json:"member-admission,omitempty"`
 
 	// A URL to redirect the group to.  If this is not empty, most
 	// other fields are ignored.

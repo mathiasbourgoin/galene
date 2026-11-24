@@ -690,7 +690,14 @@ func AddClient(group string, c Client, creds ClientCredentials) (*Group, error) 
 			}
 		}
 	}
-	if g.data["requireAdmission"] == true &&
+	hasMember := false
+	for _, member := range g.clients {
+		if !slices.Contains(member.Permissions(), "system") && !slices.Contains(member.Permissions(), "caption") {
+			hasMember = true
+			break
+		}
+	}
+	if (g.data["requireAdmission"] == true || (g.description.MemberAdmission && hasMember)) &&
 		!slices.Contains(c.Permissions(), "op") &&
 		!slices.Contains(c.Permissions(), "system") &&
 		!slices.Contains(c.Permissions(), "caption") {
@@ -1117,17 +1124,19 @@ func (desc *Description) GetPermission(groupname string, creds ClientCredentials
 }
 
 type Status struct {
-	Name              string `json:"name"`
-	Redirect          string `json:"redirect,omitempty"`
-	Location          string `json:"location,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	DisplayName       string `json:"displayName,omitempty"`
-	Description       string `json:"description,omitempty"`
-	AuthServer        string `json:"authServer,omitempty"`
-	AuthPortal        string `json:"authPortal,omitempty"`
-	Locked            bool   `json:"locked,omitempty"`
-	ClientCount       *int   `json:"clientCount,omitempty"`
-	CanChangePassword bool   `json:"canChangePassword,omitempty"`
+	Name              string   `json:"name"`
+	Redirect          string   `json:"redirect,omitempty"`
+	Location          string   `json:"location,omitempty"`
+	Endpoint          string   `json:"endpoint,omitempty"`
+	DisplayName       string   `json:"displayName,omitempty"`
+	Description       string   `json:"description,omitempty"`
+	AuthServer        string   `json:"authServer,omitempty"`
+	AuthPortal        string   `json:"authPortal,omitempty"`
+	Locked            bool     `json:"locked,omitempty"`
+	ClientCount       *int     `json:"clientCount,omitempty"`
+	Participants      []string `json:"participants,omitempty"`
+	MemberAdmission   bool     `json:"memberAdmission,omitempty"`
+	CanChangePassword bool     `json:"canChangePassword,omitempty"`
 }
 
 // Status returns a group's status.
@@ -1168,13 +1177,14 @@ func (g *Group) Status(authentified bool, base *url.URL) Status {
 	}
 
 	d := Status{
-		Name:        g.name,
-		Location:    location,
-		Endpoint:    endpoint,
-		DisplayName: desc.DisplayName,
-		AuthServer:  desc.AuthServer,
-		AuthPortal:  desc.AuthPortal,
-		Description: desc.Description,
+		Name:            g.name,
+		Location:        location,
+		Endpoint:        endpoint,
+		DisplayName:     desc.DisplayName,
+		AuthServer:      desc.AuthServer,
+		AuthPortal:      desc.AuthPortal,
+		Description:     desc.Description,
+		MemberAdmission: desc.MemberAdmission,
 	}
 
 	if authentified || desc.Public {
@@ -1183,6 +1193,13 @@ func (g *Group) Status(authentified bool, base *url.URL) Status {
 		count := g.ClientCount()
 		d.Locked = locked
 		d.ClientCount = &count
+		if desc.Public {
+			for _, client := range g.GetClients(nil) {
+				if !slices.Contains(client.Permissions(), "system") && !slices.Contains(client.Permissions(), "caption") && client.Username() != "" {
+					d.Participants = append(d.Participants, client.Username())
+				}
+			}
+		}
 	}
 	if authentified {
 		conf, err := GetConfiguration()

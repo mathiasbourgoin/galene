@@ -1442,7 +1442,7 @@ func (c *webClient) sendMeetingState(g *group.Group) error {
 }
 
 func (c *webClient) sendLobbyState(g *group.Group) error {
-	if !slices.Contains(c.permissions, "op") {
+	if !slices.Contains(c.permissions, "op") && !g.Description().MemberAdmission {
 		return nil
 	}
 	return c.write(clientMessage{Type: "usermessage", Kind: "lobby-state", Dest: c.id,
@@ -1772,7 +1772,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 		}
 		switch m.Kind {
 		case "lobby-admit", "lobby-deny":
-			if !slices.Contains(c.permissions, "op") {
+			if !slices.Contains(c.permissions, "op") && !g.Description().MemberAdmission {
 				return c.error(group.UserError("not authorised"))
 			}
 			id, _ := m.Value.(string)
