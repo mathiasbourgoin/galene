@@ -54,6 +54,69 @@ Names shown before joining are available for public rooms.
 
 <img src="docs/screenshots/prejoin-mobile.png" alt="Camera and background options before joining on mobile" width="320"> <img src="docs/screenshots/breakout-room-mobile.png" alt="A mobile participant in a breakout room with a return button" width="320">
 
+## Installing this fork
+
+These instructions install the `room-tools` branch. You need Git and Go; see
+[`go.mod`](go.mod) for the required Go version. Run the commands as the user
+that will run Galène. Keep the checkout, `data/`, and `groups/` on persistent
+storage and back them up, including `data/var/tokens.jsonl` when using invitations.
+
+```sh
+git clone --branch room-tools https://github.com/mathiasbourgoin/galene.git
+cd galene
+CGO_ENABLED=0 go build -o galene .
+CGO_ENABLED=0 go build -o galenectl ./galenectl
+mkdir -p data groups
+chmod 700 data groups
+```
+
+Start the server from this directory with `./galene`. By default it listens
+on HTTPS port 8443 and generates a self-signed certificate when necessary.
+Open `https://your-server:8443/` for the meeting portal. For a public
+installation use a valid certificate and configure the firewall, WebRTC UDP
+ports, and TURN as described in [the upstream installation guide][1]. Browsers
+require a secure context for camera and microphone access.
+
+### Enable room creation from the portal
+
+The portal uses Galène's administrative API to create permanent rooms. Set up
+an administrator and enable writable groups before using the create form:
+
+```sh
+./galenectl -admin-username admin initial-setup
+mv config.json data/config.json
+```
+
+The command prompts for a password and creates a local `galenectl` client
+configuration containing the administrator credentials. Keep it private.
+The generated `data/config.json` enables `"writableGroups": true` and contains
+the administrator in its `users` entry. The server user must be able to read `data/config.json` and
+write to `groups/`. If configuration already exists, update it instead of
+replacing it; [the configuration reference][2] describes its fields. The
+server reloads configuration changes without a restart.
+
+In the portal, open **Autorisation de création** and enter the administrator
+username and password. Choose a public room or a room with a guest password.
+For member admission, select **Faire patienter les invités**: the first
+participant enters directly and a person already present can admit later
+arrivals. Public room names are visible before joining; private room
+participant names are not exposed on the unauthenticated status endpoint.
+
+### Background effects and reverse proxy
+
+Background blur and replacement need the optional MediaPipe files and model.
+Follow [the upstream MediaPipe installation steps](galene-install.md#optional-install-libraries-for-background-blur)
+on the machine serving `static/`. Without them, those effects are unavailable.
+Animated backgrounds additionally depend on the browser's media support.
+
+For a reverse proxy, configure HTTPS and WebSocket forwarding and set
+`proxyURL` in `data/config.json` to the externally visible URL; see [the
+upstream reverse proxy instructions](galene-install.md#running-behind-a-reverse-proxy). The
+assets and WebSocket paths in this fork assume deployment at the origin root.
+Serving it under a URL prefix requires corresponding proxy and asset path
+configuration; setting `proxyURL` alone does not rewrite those paths.
+Optional French captions require the separate [caption worker setup](contrib/galene-stt/README.md).
+
 ## Quick start
 
 ```sh
