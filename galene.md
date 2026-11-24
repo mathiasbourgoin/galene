@@ -577,10 +577,11 @@ A moderator can enable the waiting room from **Participants** and admit or
 decline each authenticated guest. Guests in the waiting room do not receive
 meeting media or chat.
 
-Under **Plus**, a moderator can publish an Excalidraw collaboration link and
-present it in the main view. Participants can return to their own meeting
-view or open the board in another tab. The screen sharer can use temporary
-arrows or highlights and decide whether other participants may annotate.
+Under **Plus**, participants can draw on the shared whiteboard and export it
+as SVG. A moderator can bring the board into everyone's main view. Also under
+**Plus**, a moderator can share an Excalidraw link for participants to open in
+a separate tab. The screen sharer can use temporary arrows or highlights and
+decide whether other participants may annotate.
 
 The meeting tools include polls, supported questions and shared decisions.
 A question author can attach their question to their raised hand. The

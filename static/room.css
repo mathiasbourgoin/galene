@@ -288,10 +288,14 @@ button:disabled { cursor: not-allowed; opacity: .68; }
 #board-form { display: grid; gap: .6rem; margin-top: .9rem; }
 #board-form a { justify-self: start; }
 #board-url { width: 100%; padding: .6rem; border: 1px solid var(--ux-border); border-radius: .5rem; background: var(--ux-field); color: var(--ux-ink); }
-#board-stage { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow: hidden; border-radius: .65rem; background: var(--ux-surface); }
+#board-stage { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; overflow: hidden; border-radius: .65rem; background: var(--ux-surface); }
 #board-stage header { display: flex; flex-wrap: wrap; }
 #board-stage strong { flex: 1; }
-#board-frame { border: 0; width: 100%; height: 100%; background: #fff; }
+#board-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem .7rem; padding: .45rem .7rem; }
+#board-actions select { color: var(--ux-ink); background: var(--ux-field); }
+#board-feedback { color: var(--ux-muted); }
+#shared-canvas { width: 100%; height: 100%; align-self: center; touch-action: none; }
+#shared-canvas[data-editable] { cursor: crosshair; }
 #network-metrics { display: grid; grid-template-columns: 1fr auto; gap: .4rem .8rem; margin-bottom: .9rem; }
 #network-metrics dd { margin: 0; }
 #network-summary { color: #ffe2a5; }

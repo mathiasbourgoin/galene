@@ -85,10 +85,20 @@
                       <section id="board-stage" aria-label="Tableau collaboratif" hidden>
                         <header class="ux-panel-header">
                           <strong>Tableau collaboratif</strong>
-                          <a id="board-popout" class="ux-button" target="_blank" rel="noopener noreferrer">Nouvel onglet</a>
+                          <button id="download-board" class="ux-button" type="button">Exporter</button>
                           <button id="board-close-stage" class="ux-button" type="button">Revenir à l’appel</button>
                         </header>
-                        <iframe id="board-frame" title="Tableau Excalidraw" sandbox="allow-scripts allow-same-origin allow-downloads" allow="clipboard-read; clipboard-write" referrerpolicy="no-referrer"></iframe>
+                        <div id="board-actions">
+                          <label>Outil <select id="board-mode"><option value="pen">Crayon</option><option value="box">Rectangle</option><option value="arrow">Flèche</option></select></label>
+                          <label>Couleur <select id="board-color"><option value="#182a28">Encre</option><option value="#08714b">Vert</option><option value="#2363b4">Bleu</option><option value="#be3828">Rouge</option></select></label>
+                          <button id="board-undo" class="ux-button" type="button">Annuler mon trait</button>
+                          <button id="board-erase" class="ux-button" type="button" hidden>Effacer le tableau</button>
+                          <span id="board-feedback" role="status"></span>
+                        </div>
+                        <svg id="shared-canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10000 6250" aria-label="Zone de dessin du tableau partagé">
+                          <rect fill="#f6f8f5" width="10000" height="6250"/>
+                          <g id="board-strokes"></g>
+                        </svg>
                       </section>
                     </div>
                     <div id="participant-tiles"></div>
@@ -255,8 +265,9 @@
         <form method="dialog"><button class="ux-button" type="submit">Fermer</button></form>
       </div>
       <p id="board-status" role="status"></p>
-      <button id="board-open" class="ux-button ux-primary" type="button" hidden>Afficher dans l’appel</button>
+      <button id="board-open" class="ux-button ux-primary" type="button">Afficher dans l’appel</button>
       <button id="board-present" class="ux-button" type="button" hidden>Afficher pour tout le salon</button>
+      <a id="board-popout" class="ux-button" target="_blank" rel="noopener noreferrer" hidden>Ouvrir le lien Excalidraw</a>
       <form id="board-form" hidden>
         <p>Dans Excalidraw, démarre une collaboration et copie son lien.</p>
         <a href="https://excalidraw.com/" class="ux-button" target="_blank" rel="noopener noreferrer">Ouvrir Excalidraw</a>
@@ -481,6 +492,7 @@ Non</textarea>
     <script src="/call-diagnostics.js" defer></script>
     <script src="/meeting-tools.js" defer></script>
     <script src="/share-annotations.js" defer></script>
+    <script src="/shared-board.js" defer></script>
     <script src="/galene.js" defer></script>
   </body>
 </html>

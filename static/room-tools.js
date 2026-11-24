@@ -8,7 +8,6 @@ let boardUrl = '';
 let boardPresented = false;
 let pointerTimeout;
 const boardStage = document.getElementById('board-stage');
-const boardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById('board-frame'));
 
 /** @param {boolean} open */
 function setRoomToolsOpen(open) {
@@ -68,32 +67,32 @@ function reflectSharedBoard(value, presented) {
     boardUrl = next;
     const canShare = serverConnection?.permissions.includes('op');
     const status = document.getElementById('board-status');
-    document.getElementById('board-open').hidden = !boardUrl;
-    document.getElementById('board-present').hidden = !boardUrl || !canShare;
+    document.getElementById('board-present').hidden = !canShare;
     document.getElementById('board-present').textContent = presented ? 'Arrêter la présentation' : 'Afficher pour tout le salon';
     document.getElementById('board-form').hidden = !canShare;
     document.getElementById('board-clear').hidden = !boardUrl;
     if(changed)
         getInputElement('board-url').value = '';
-    status.textContent = boardUrl ? 'Un tableau est partagé dans ce salon.' : 'Aucun tableau partagé pour le moment.';
-    if(!boardUrl || boardPresented !== !!presented || (changed && !boardStage.hidden))
-        showBoardStage(!!boardUrl && (!!presented || changed && !boardStage.hidden));
+    status.textContent = 'Le dessin dans Galène est partagé avec les participants.';
+    const link = /** @type {HTMLAnchorElement} */ (document.getElementById('board-popout'));
+    link.hidden = !boardUrl;
+    if(boardUrl)
+        link.href = boardUrl;
+    else
+        link.removeAttribute('href');
+    if(boardPresented !== !!presented)
+        showBoardStage(!!presented);
     boardPresented = !!presented;
+    updateBoardPermission();
 }
 
 /** @param {boolean} open */
 function showBoardStage(open) {
-    if(!boardUrl)
-        open = false;
     boardStage.hidden = !open;
     if(open) {
         pointerEnabled = false;
-        if(boardFrame.getAttribute('src') !== boardUrl)
-            boardFrame.src = boardUrl;
-        /** @type {HTMLAnchorElement} */ (document.getElementById('board-popout')).href = boardUrl;
+        requestBoard();
     }
-    if(!boardUrl)
-        boardFrame.removeAttribute('src');
     if(serverConnection) {
         showVideo();
         resizePeers();
@@ -106,6 +105,8 @@ function resetRoomTools() {
     lastPointerSent = -Infinity;
     clearSharePointer();
     reflectSharedBoard(null);
+    showBoardStage(false);
+    resetBoard();
     getInputElement('board-url').value = '';
     for(const id of ['board-dialog', 'invite-dialog']) {
         const dialog = /** @type {HTMLDialogElement} */ (document.getElementById(id));
@@ -275,14 +276,14 @@ function initializeRoomTools() {
     };
     getButtonElement('board-clear').onclick = () => {
         if(serverConnection?.permissions.includes('op'))
-            serverConnection.groupAction('setdata', {sharedBoard: null, presentBoard: null});
+            serverConnection.groupAction('setdata', {sharedBoard: null});
     };
     getButtonElement('board-open').onclick = () => {
         dialog.close();
         showBoardStage(true);
     };
     getButtonElement('board-present').onclick = () => {
-        if(!boardUrl || !serverConnection?.permissions.includes('op'))
+        if(!serverConnection?.permissions.includes('op'))
             return;
         serverConnection.groupAction('setdata', {presentBoard: !boardPresented});
         dialog.close();

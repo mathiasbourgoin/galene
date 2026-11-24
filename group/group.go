@@ -112,6 +112,7 @@ type Group struct {
 	timestamp   time.Time
 	data        map[string]interface{}
 	meeting     meetingState
+	board       BoardState
 	lobby       map[string]waitingClient
 }
 

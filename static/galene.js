@@ -3168,6 +3168,19 @@ document.addEventListener('click', event => {
  */
 function gotUserMessage(id, dest, username, time, privileged, kind, error, message) {
     switch(kind) {
+    case 'board-state':
+        if(!id && privileged)
+            receiveBoardState(message);
+        break;
+    case 'board-change':
+        if(!id && privileged)
+            receiveBoardChange(message);
+        break;
+    case 'board-error':
+        if(!id && privileged)
+            document.getElementById('board-feedback').textContent = message === 'board is full' ?
+                'Le tableau est plein. Exporte le dessin avant de l’effacer.' : 'Cette action est indisponible.';
+        break;
     case 'meeting-state':
         if(!id && privileged)
             reflectMeetingState(message);
@@ -4813,4 +4826,5 @@ initializeCallDiagnostics();
 initializeMeetingTools();
 initializeLobby();
 initializeShareAnnotations();
+initializeSharedBoard();
 start();

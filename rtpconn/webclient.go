@@ -1716,6 +1716,20 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 		if g == nil {
 			return c.error(group.UserError("join a group first"))
 		}
+		if action, ok := strings.CutPrefix(m.Kind, "board/"); ok {
+			if action == "state" {
+				return c.write(clientMessage{Type: "usermessage", Kind: "board-state", Dest: c.id,
+					Privileged: true, Value: g.Board()})
+			}
+			value, _ := m.Value.(map[string]any)
+			change, err := g.ChangeBoard(c, action, value)
+			if err != nil {
+				return c.write(clientMessage{Type: "usermessage", Kind: "board-error", Dest: c.id,
+					Privileged: true, Value: err.Error()})
+			}
+			return broadcast(g.GetClients(nil), clientMessage{Type: "usermessage", Kind: "board-change",
+				Privileged: true, Value: change})
+		}
 		if action, ok := strings.CutPrefix(m.Kind, "meeting/"); ok {
 			data, _ := m.Value.(map[string]any)
 			if err := g.ChangeMeeting(c, action, data); err != nil {

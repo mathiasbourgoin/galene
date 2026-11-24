@@ -25,6 +25,7 @@
         "call-diagnostics.js",
         "meeting-tools.js",
         "share-annotations.js",
+        "shared-board.js",
         "galene.js",
         "management.js",
         "example/example.js"
