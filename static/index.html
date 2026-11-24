@@ -1,39 +1,93 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
   <head>
-    <title>Galène</title>
+    <title>Galène · Réunions</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#122b28">
     <link rel="stylesheet" href="/common.css">
-    <link rel="stylesheet" href="/mainpage.css">
-    <link rel="stylesheet" type="text/css" href="/galene.css"/>
-    <link rel="author" href="https://www.irif.fr/~jch/"/>
+    <link rel="stylesheet" href="/portal.css">
+    <link rel="author" href="https://www.irif.fr/~jch/">
   </head>
-
   <body>
-  
-    <div class="home">
-      <h1 id="title" class="navbar-brand">Galène</h1>
+    <main class="portal">
+      <header class="portal-header">
+        <a class="brand" href="./" aria-label="Accueil Galène">
+          <span class="brand-icon" aria-hidden="true">◉</span>
+          <span><strong>Galène</strong><small>Visioconférence</small></span>
+        </a>
+        <span class="secure-note"><span aria-hidden="true">●</span> Réunions privées ou publiques</span>
+      </header>
 
-      <form id="groupform">
-        <label for="group">Group:</label>
-        <input id="group" type="text" name="group" class="form-control form-control-inline" autofocus/>
-        <input id='submitbutton' type="submit" value="Join" class="btn btn-default btn-large"/><br/>
-      </form>
+      <section class="welcome" aria-labelledby="welcome-title">
+        <p class="eyebrow">SIMPLE · DIRECT · CONFIDENTIEL</p>
+        <h1 id="welcome-title">On se retrouve ?</h1>
+        <p>Rejoignez une réunion avec son lien ou son identifiant, ou créez un salon.</p>
+      </section>
 
-      <p id="errormessage"></p>
-  
-      <div id="public-groups" class="groups">
-        <h2>Public groups</h2>
-  
-        <table id="public-groups-table"></table>
+      <div class="portal-grid">
+        <section class="card join-card" aria-labelledby="join-title">
+          <div class="card-heading">
+            <span class="step">01</span>
+            <div><h2 id="join-title">Rejoindre une réunion</h2><p>Collez un lien d’invitation ou saisissez le nom du salon.</p></div>
+          </div>
+          <form id="join-form">
+            <label for="room-link">Lien ou identifiant du salon</label>
+            <div class="input-action">
+              <input id="room-link" name="room" type="text" placeholder="ex. reunion-equipe ou lien d’invitation" autocomplete="url" required>
+              <button class="button primary" id="join-button" type="submit">Rejoindre <span aria-hidden="true">→</span></button>
+            </div>
+            <p class="field-hint">Les liens avec jeton d’invitation sont acceptés. Le mot de passe du salon sera demandé à l’entrée.</p>
+            <p class="form-message" id="join-message" role="status" aria-live="polite"></p>
+          </form>
+
+          <div class="public-section" id="public-section">
+            <div class="section-divider"><span>Ou choisir un salon public</span></div>
+            <div id="public-groups" class="public-groups" aria-live="polite"><p class="muted">Chargement des salons…</p></div>
+          </div>
+        </section>
+
+        <section class="card create-card" aria-labelledby="create-title">
+          <div class="card-heading">
+            <span class="step">02</span>
+            <div><h2 id="create-title">Créer un salon</h2><p>Choisissez un nom et partagez le lien avec vos invités.</p></div>
+          </div>
+          <form id="create-form">
+            <label for="new-room">Nom du salon</label>
+            <div class="slug-input"><span aria-hidden="true">/</span><input id="new-room" name="room" type="text" placeholder="ma-reunion" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{1,62}" minlength="2" maxlength="63" required></div>
+            <p class="field-hint">2 à 63 caractères. Lettres, chiffres, tirets et soulignés.</p>
+
+            <label for="room-title">Titre affiché <span class="optional">facultatif</span></label>
+            <input id="room-title" name="title" type="text" maxlength="100" placeholder="Réunion d’équipe">
+
+            <fieldset class="access-options">
+              <legend>Accès au salon</legend>
+              <label class="radio-option"><input type="radio" name="access" value="password" checked><span><strong>Protégé par mot de passe</strong><small>Les invités auront besoin du mot de passe.</small></span></label>
+              <label class="radio-option"><input type="radio" name="access" value="public"><span><strong>Public</strong><small>Accessible sans mot de passe et listé ici.</small></span></label>
+            </fieldset>
+
+            <div id="password-field">
+              <label for="guest-password">Mot de passe des invités</label>
+              <input id="guest-password" name="password" type="password" minlength="1" autocomplete="new-password" placeholder="Choisissez un mot de passe">
+            </div>
+
+            <details class="admin-details">
+              <summary>Autorisation de création</summary>
+              <p>Utilisez votre compte administrateur Galène. Ces identifiants ne sont pas enregistrés.</p>
+              <label for="admin-user">Utilisateur administrateur</label>
+              <input id="admin-user" name="admin-user" type="text" autocomplete="username">
+              <label for="admin-password">Mot de passe administrateur</label>
+              <input id="admin-password" name="admin-password" type="password" autocomplete="current-password">
+            </details>
+
+            <button class="button primary create-button" id="create-button" type="submit">Créer le salon <span aria-hidden="true">→</span></button>
+            <p class="form-message" id="create-message" role="status" aria-live="polite"></p>
+          </form>
+        </section>
       </div>
-    </div>
-    <footer class="signature">
-      <p><a href="https://galene.org/">Galène</a> by <a href="https://www.irif.fr/~jch/" rel="author">Juliusz Chroboczek</a></p>
-    </footer>
-    
-    <script src="/mainpage.js" defer></script>
-    
+
+      <footer class="portal-footer"><a href="https://galene.org/">Galène</a>, logiciel libre de visioconférence créé par <a href="https://www.irif.fr/~jch/" rel="author">Juliusz Chroboczek</a> et ses contributeurs.</footer>
+    </main>
+    <script src="/portal.js" defer></script>
   </body>
 </html>

@@ -19,6 +19,7 @@ server, media stack, and web client.
 | Meeting tools | A shared whiteboard in the main view with SVG export, an optional Excalidraw link, polls, supported questions that can be attached to raised hands, and shared decision notes |
 | Access and groups | A waiting room with moderator admission, and temporary breakout rooms with manual or balanced assignments, live occupancy, and a collective return |
 | Connection and captions | An audio-first receive mode with an option to keep screen shares, WebRTC connection diagnostics, and optional [French captions](contrib/galene-stt/README.md) |
+| Meeting portal | Join by room name, invitation URL, or a link carrying a token; browse public rooms; and create a permanent room protected by a guest password or open to the public |
 
 ### Screenshots
 
@@ -35,6 +36,10 @@ server, media stack, and web client.
 ![Poll results, questions, and shared decision notes](docs/screenshots/polls-questions-and-notes.png)
 
 ![Moderator view of breakout rooms with assignments and live occupancy](docs/screenshots/breakout-rooms.png)
+
+**Joining and room access**
+
+![The Galène meeting portal for joining a room or creating a password-protected or public room](docs/screenshots/meeting-portal.png)
 
 **On mobile**
 
