@@ -4,6 +4,42 @@ Galene is a fully-featured videoconferencing system that is easy to deploy
 and requires very moderate server resources.  It is described at
 <https://galene.org>.
 
+## Additions in this fork
+
+[Galène is the upstream project](https://github.com/jech/galene), written by
+Juliusz Chroboczek and its contributors. The additions below build on Galène's
+server, media stack, and web client.
+
+| Area | Additions |
+| --- | --- |
+| Room interface | French call controls, a mobile layout, invitation links with expiration controls, and tiles for participants without a camera |
+| Camera and preview | Camera and microphone testing before joining, stronger default background blur, a solid background, and image, animated GIF and WebM backgrounds. A softer, more stable person mask and a concealed image if filtering fails |
+| Participation | An ordered raised-hand queue with a personal position indicator, plus floating emoji reactions and a firework animation when reactions arrive together |
+| Presentation | Automatic focus on a screen share, a participant filmstrip, a shared pointer, and temporary annotations with presenter-controlled access |
+| Meeting tools | A shared whiteboard in the main view with SVG export, an optional Excalidraw link, polls, supported questions that can be attached to raised hands, and shared decision notes |
+| Access and groups | A waiting room with moderator admission, and temporary breakout rooms with manual or balanced assignments, live occupancy, and a collective return |
+| Connection and captions | An audio-first receive mode with an option to keep screen shares, WebRTC connection diagnostics, and optional [French captions](contrib/galene-stt/README.md) |
+
+### Screenshots
+
+**Presentation and collaboration**
+
+![A shared presentation with an annotation and a participant filmstrip](docs/screenshots/presentation-and-annotation.png)
+
+![The shared whiteboard in the meeting's main view](docs/screenshots/shared-whiteboard.png)
+
+**Participation and moderation**
+
+![Floating reactions, a reaction firework, and the hand-raising queue](docs/screenshots/reactions-and-speaking-queue.png)
+
+![Poll results, questions, and shared decision notes](docs/screenshots/polls-questions-and-notes.png)
+
+![Moderator view of breakout rooms with assignments and live occupancy](docs/screenshots/breakout-rooms.png)
+
+**On mobile**
+
+<img src="docs/screenshots/prejoin-mobile.png" alt="Camera and background options before joining on mobile" width="320"> <img src="docs/screenshots/breakout-room-mobile.png" alt="A mobile participant in a breakout room with a return button" width="320">
+
 ## Quick start
 
 ```sh
