@@ -797,18 +797,25 @@ func GetUserPassword(group, username string) (Password, string, error) {
 		group = strings.TrimRight(group, "/")
 	}
 
+	localUserExists := false
 	if group != "" {
 		desc, err := GetDescription(group)
 		if err != nil {
 			return Password{}, "", err
 		}
-		if u, ok := desc.Users[username]; ok && u.Password.Type != "" {
-			return u.Password, group, nil
+		if u, ok := desc.Users[username]; ok {
+			localUserExists = true
+			if u.Password.Type != "" {
+				return u.Password, group, nil
+			}
 		}
 	}
 
 	u, _, err := GetGlobalUser(username)
 	if err != nil {
+		if localUserExists && errors.Is(err, ErrNoSuchUsername) {
+			return Password{}, group, nil
+		}
 		return Password{}, "", err
 	}
 	return u.Password, "", nil

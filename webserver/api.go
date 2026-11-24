@@ -40,9 +40,11 @@ func isAdminOrExplicitPassword(groupname, user string, creds group.ClientCredent
 		}
 	}
 
-	if p, _, err := group.GetUserPassword(groupname, user); err == nil {
-		if ok, err := p.Match(creds.Password); err == nil && ok {
-			return true
+	if user != "" {
+		if p, _, err := group.GetUserPassword(groupname, user); err == nil {
+			if ok, err := p.Match(creds.Password); err == nil && ok {
+				return true
+			}
 		}
 	}
 
