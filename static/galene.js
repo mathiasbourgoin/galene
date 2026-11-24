@@ -1873,6 +1873,7 @@ function scheduleReconsiderDownRate() {
  *     - the video element to add.  If null, a new element with custom
  *       controls will be created.
  */
+let companionMode = false;
 async function setMedia(c, mirror, video) {
     let div = document.getElementById('peer-' + c.localId);
     if(!div) {
@@ -1897,7 +1898,7 @@ async function setMedia(c, mirror, video) {
             media = video;
         } else {
             media = document.createElement('video');
-            if(c.up)
+            if(c.up || companionMode)
                 media.muted = true;
         }
 
@@ -2663,6 +2664,8 @@ let notificationAudio = null;
 let notificationsReadyAt = 0;
 
 function playMeetingNotice(hand) {
+    if(companionMode)
+        return;
     try {
         notificationAudio = notificationAudio || new AudioContext();
         if(notificationAudio.state !== 'running')
@@ -4616,8 +4619,10 @@ document.getElementById('loginform').onsubmit = async function(e) {
 
     setVisibility('passwordform', true);
 
+    companionMode = getInputElement('join-companion').checked;
+    document.getElementById('companion-audio').hidden = !companionMode;
     presentRequested = {
-        audio: getInputElement('join-mic').checked,
+        audio: !companionMode && getInputElement('join-mic').checked,
         video: getInputElement('join-camera').checked,
     };
     getInputElement('join-mic').checked = false;
@@ -4626,6 +4631,15 @@ document.getElementById('loginform').onsubmit = async function(e) {
 
     // Connect to the server, gotConnected will join.
     serverConnect();
+};
+
+getButtonElement('companion-audio').onclick = () => {
+    companionMode = !companionMode;
+    for(const stream of Object.values(serverConnection.down)) {
+        const element = document.getElementById('media-' + stream.localId);
+        if(element instanceof HTMLMediaElement) element.muted = companionMode;
+    }
+    getButtonElement('companion-audio').textContent = companionMode ? 'Activer le son de cet appareil' : 'Couper le son de cet appareil';
 };
 
 

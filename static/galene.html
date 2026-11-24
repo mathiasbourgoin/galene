@@ -182,6 +182,8 @@
                         <label><input id="join-mic" type="checkbox"/> Activer le micro</label>
                         <label><input id="join-camera" type="checkbox"/> Activer la caméra</label>
                       </fieldset>
+                      <label><input id="join-companion" type="checkbox"> Rejoindre en mode compagnon</label>
+                      <p>Sur un second appareil, le micro et le son sont coupés au départ pour éviter l’écho. La caméra reste au choix.</p>
                       <p id="join-error" role="alert" hidden></p>
                       <button id="connectbutton" type="submit" class="ux-button ux-primary">Rejoindre le salon</button>
                     </form>
@@ -191,6 +193,7 @@
             </div>
           </main>
           <nav class="ux-call-controls" id="call-controls" aria-label="Commandes du salon" hidden>
+            <button id="companion-audio" class="ux-button" type="button" hidden>Activer le son de cet appareil</button>
             <button id="mutebutton" class="ux-button" type="button" aria-pressed="false">
               <span><i class="fas fa-microphone-slash" aria-hidden="true"></i></span><span id="mic-label">Micro coupé</span>
             </button>
