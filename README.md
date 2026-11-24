@@ -54,7 +54,7 @@ Names shown before joining are available for public rooms.
 
 <img src="docs/screenshots/prejoin-mobile.png" alt="Camera and background options before joining on mobile" width="320"> <img src="docs/screenshots/breakout-room-mobile.png" alt="A mobile participant in a breakout room with a return button" width="320">
 
-## Installing this fork
+## Quick start
 
 These instructions install the `room-tools` branch. You need Git and Go; see
 [`go.mod`](go.mod) for the required Go version. Run the commands as the user
@@ -116,24 +116,6 @@ assets and WebSocket paths in this fork assume deployment at the origin root.
 Serving it under a URL prefix requires corresponding proxy and asset path
 configuration; setting `proxyURL` alone does not rewrite those paths.
 Optional French captions require the separate [caption worker setup](contrib/galene-stt/README.md).
-
-## Quick start
-
-```sh
-git clone https://github.com/jech/galene
-cd galene
-CGO_ENABLED=0 go build -ldflags='-s -w'
-mkdir groups
-echo '{"users": {"vimes": {"password":"sybil", "permissions":"op"}}}' > groups/night-watch.json
-./galene &
-```
-
-Point your browser at <https://localhost:8443/group/night-watch/>, ignore
-the unknown certificate warning, and log in with username *vimes* and
-password *sybil*.
-
-For full installation instructions, please see the file [galene-install.md][1]
-in this directory.
 
 ## Documentation
 
