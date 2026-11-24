@@ -23,6 +23,7 @@
 /**
  * @typedef {Object} filterDefinition
  * @property {string} [description]
+ * @property {boolean} [protectBackground]
  * @property {(this: filterDefinition) => Promise<boolean>} [predicate]
  * @property {(this: Filter) => Promise<void>} [init]
  * @property {(this: Filter) => Promise<void>} [cleanup]
@@ -86,9 +87,17 @@ Filter.prototype.start = async function() {
     });
     this.video.srcObject = this.inputStream;
     this.video.muted = true;
-    this.video.play();
-    if(this.definition.init)
-        await this.definition.init.call(this);
+    this.video.play().catch(() => {});
+    try {
+        if(this.definition.init)
+            await this.definition.init.call(this);
+    } catch(e) {
+        this.captureStream.getTracks()[0].stop();
+        this.video.srcObject = null;
+        if(this.definition.cleanup)
+            await this.definition.cleanup.call(this);
+        throw e;
+    }
     this.timer = setInterval(() => this.draw(), 1000 / this.frameRate);
 }
 
@@ -146,6 +155,7 @@ Filter.prototype.stop = async function() {
     this.captureStream.getTracks()[0].stop();
     clearInterval(this.timer);
     this.timer = null;
+    this.video.srcObject = null;
     if(this.definition.cleanup)
         await this.definition.cleanup.call(this);
 };
@@ -181,6 +191,10 @@ async function setFilter(c) {
 
     let filter = new Filter(c.stream, c.userdata.filterDefinition);
     await filter.start();
+    if(!c.sc) {
+        await filter.stop();
+        return;
+    }
     c.setStream(filter.outputStream);
     c.userdata.filter = filter;
 }
@@ -195,7 +209,10 @@ async function setFilter(c) {
 async function workerSendReceive(worker, message, transfer) {
     if(worker.onmessage)
         throw new Error("worker busy");
+    let timer;
     let p = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Background worker timed out')), 15000);
+        worker.onerror = e => reject(new Error(e.message || 'Background worker unavailable'));
         worker.onmessage = e => {
             if(e && e.data) {
                 if(e.data instanceof Error)
@@ -211,8 +228,297 @@ async function workerSendReceive(worker, message, transfer) {
         worker.postMessage(message, transfer);
         return await p
     } finally {
+        clearTimeout(timer);
+        worker.onerror = null;
         worker.onmessage = null;
     }
+}
+
+/**
+ * @typedef {Object} BackgroundImage
+ * @property {(timestamp: number) => ImageBitmap|HTMLCanvasElement|HTMLVideoElement} frame
+ * @property {() => void} [close]
+ * @property {() => Promise<void>} [play]
+ */
+
+// Keep the chosen image in this tab only.
+/** @type {BackgroundImage | null} */
+let backgroundImage = null;
+/** @type {Promise<boolean> | null} */
+let backgroundSupport = null;
+
+function canSegmentBackground() {
+    if(backgroundSupport)
+        return backgroundSupport;
+
+    if(typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function' ||
+       typeof createImageBitmap !== 'function' || !HTMLCanvasElement.prototype.captureStream) {
+        backgroundSupport = Promise.resolve(false);
+        return backgroundSupport;
+    }
+
+    let context = new OffscreenCanvas(1, 1).getContext('webgl2');
+    if(!context) {
+        backgroundSupport = Promise.resolve(false);
+        return backgroundSupport;
+    }
+    context.getExtension('WEBGL_lose_context')?.loseContext();
+
+    backgroundSupport = fetch('/third-party/tasks-vision/vision_bundle.mjs', {
+        method: 'HEAD',
+    }).then(r => r.ok).catch(e => {
+        console.warn('Background effects are unavailable:', e);
+        return false;
+    });
+    return backgroundSupport;
+}
+
+/**
+ * @param {File} file
+ * @returns {Promise<BackgroundImage>}
+ */
+async function decodeBackgroundImage(file) {
+    let mime = file.type.split(';', 1)[0].trim().toLowerCase();
+    if(mime === 'video/webm' || mime === 'audio/webm' || /\.webm$/i.test(file.name)) {
+        if(file.size > 30 * 1024 * 1024)
+            throw new Error('Choisis une vidéo WebM de 30 Mio maximum.');
+        return await decodeBackgroundVideo(file);
+    }
+    if(!/^image\/(png|jpeg|webp|gif)$/.test(mime) ||
+       file.size > 10 * 1024 * 1024) {
+        throw new Error('Choisis une image PNG, JPEG, WebP ou GIF de 10 Mio maximum, ou une vidéo WebM.');
+    }
+
+    if(mime === 'image/gif') {
+        let {loadGifBackground} = await import('./animated-background.mjs');
+        return loadGifBackground(await file.arrayBuffer());
+    }
+
+    let image = await createImageBitmap(file);
+    let maxDimension = Math.max(image.width, image.height);
+    if(maxDimension > 1920) {
+        let original = image;
+        let scale = 1920 / maxDimension;
+        try {
+            image = await createImageBitmap(original, {
+                resizeWidth: Math.max(1, Math.round(original.width * scale)),
+                resizeHeight: Math.max(1, Math.round(original.height * scale)),
+                resizeQuality: 'high',
+            });
+        } finally {
+            original.close();
+        }
+    }
+
+    return {
+        frame: () => image,
+        close: () => image.close(),
+    };
+}
+
+/** @param {File} file @returns {Promise<BackgroundImage>} */
+async function decodeBackgroundVideo(file) {
+    let signature = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    if(signature[0] !== 0x1a || signature[1] !== 0x45 ||
+       signature[2] !== 0xdf || signature[3] !== 0xa3)
+        throw new Error('Ce fichier n’est pas un WebM valide.');
+
+    let video = document.createElement('video');
+    video.defaultMuted = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.loop = true;
+    video.preload = 'auto';
+    let url = URL.createObjectURL(file.slice(0, file.size, 'video/webm'));
+    let idleTimer;
+    let loadTimer;
+    let autoPlay = true;
+    /** @type {Promise<void>|null} */
+    let playback = null;
+    function close() {
+        autoPlay = false;
+        clearTimeout(idleTimer);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        URL.revokeObjectURL(url);
+    }
+    try {
+        await new Promise((resolve, reject) => {
+            video.onloadeddata = () => resolve(null);
+            video.onerror = () => reject(new Error(
+                video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ?
+                    'Ce navigateur ne reconnaît pas le codec de ce fichier WebM.' :
+                    'Le navigateur n’a pas pu décoder la vidéo WebM.',
+            ));
+            loadTimer = setTimeout(() => reject(new Error(
+                'Le navigateur n’a pas fourni de première image du WebM.',
+            )), 12000);
+            video.src = url;
+        });
+        if(!video.videoWidth || !video.videoHeight)
+            throw new Error('Ce fichier WebM ne contient pas de piste vidéo.');
+    } catch(e) {
+        video.onloadeddata = video.onerror = null;
+        close();
+        throw e;
+    } finally {
+        video.onloadeddata = video.onerror = null;
+        clearTimeout(loadTimer);
+    }
+
+    function play() {
+        if(!playback) {
+            playback = video.play().then(() => {
+                playback = null;
+            }, e => {
+                playback = null;
+                autoPlay = false;
+                throw e;
+            });
+        }
+        return playback;
+    }
+    return {
+        frame: () => {
+            if(video.paused && autoPlay && !playback)
+                play().catch(() => {});
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => video.pause(), 1000);
+            return video;
+        },
+        play: () => {
+            autoPlay = true;
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => video.pause(), 1000);
+            return play();
+        },
+        close: close,
+    };
+}
+
+/** @param {BackgroundImage | null} image */
+function setBackgroundImage(image) {
+    backgroundImage?.close?.();
+    backgroundImage = image;
+}
+
+/**
+ * @param {string} description
+ * @param {'blur'|'image'|'solid'} mode
+ * @returns {filterDefinition}
+ */
+function createBackgroundFilter(description, mode) {
+    return {
+        description: description,
+        predicate: mode === 'image' ? canSegmentBackground : undefined,
+        protectBackground: true,
+        init: async function() {
+            if(!(this instanceof Filter))
+                throw new Error('Bad type for this');
+            if(!await canSegmentBackground()) {
+                displayWarning('Flou indisponible dans ce navigateur. L’image est masquée.');
+                return;
+            }
+            try {
+                this.userdata.worker = new Worker('/background-blur-worker.js');
+                await workerSendReceive(this.userdata.worker, {
+                    model: '/third-party/tasks-vision/models/selfie_segmenter.tflite',
+                });
+            } catch(e) {
+                this.userdata.worker?.terminate();
+                this.userdata.worker = null;
+                console.warn('Background effect unavailable:', e);
+                displayWarning('Effet vidéo indisponible. L’image est masquée.');
+            }
+        },
+        cleanup: async function() {
+            let worker = this.userdata.worker;
+            if(!worker)
+                return;
+            if(worker.onmessage)
+                worker.onmessage(null);
+            worker.terminate();
+            this.userdata.worker = null;
+        },
+        draw: async function(src, ctx) {
+            const width = src.videoWidth;
+            const height = src.videoHeight;
+            if(ctx.canvas.width !== width || ctx.canvas.height !== height) {
+                ctx.canvas.width = width;
+                ctx.canvas.height = height;
+            }
+
+            let bitmap;
+            let mask;
+            try {
+                if(this.userdata.worker) {
+                    bitmap = await createImageBitmap(src);
+                    const result = await workerSendReceive(this.userdata.worker, {
+                        bitmap: bitmap,
+                        timestamp: performance.now(),
+                    }, [bitmap]);
+                    if(!result)
+                        return false;
+                    bitmap = result.bitmap;
+                    mask = result.mask;
+
+                    const image = mode === 'image' ? backgroundImage?.frame(performance.now()) : null;
+                    const imageWidth = image instanceof HTMLVideoElement ? image.videoWidth : image?.width;
+                    const imageHeight = image instanceof HTMLVideoElement ? image.videoHeight : image?.height;
+
+                    ctx.globalCompositeOperation = 'copy';
+                    ctx.drawImage(mask, 0, 0);
+                    ctx.globalCompositeOperation = 'source-out';
+                    ctx.drawImage(bitmap, 0, 0);
+                    ctx.globalCompositeOperation = 'destination-over';
+
+                    if(imageWidth && imageHeight &&
+                       (!(image instanceof HTMLVideoElement) || (!image.error && image.readyState >= 2))) {
+                        const scale = Math.max(width / imageWidth, height / imageHeight);
+                        const dw = imageWidth * scale;
+                        const dh = imageHeight * scale;
+                        ctx.drawImage(image, (width - dw) / 2, (height - dh) / 2, dw, dh);
+                    } else if(mode !== 'solid') {
+                        // Discard fine detail before upscaling. An opaque
+                        // blurred layer covers all of the area outside the mask.
+                        if(!this.userdata.blurCanvas)
+                            this.userdata.blurCanvas = document.createElement('canvas');
+                        const small = /** @type {HTMLCanvasElement} */ (this.userdata.blurCanvas);
+                        const scale = 16 / Math.max(width, height);
+                        const sw = Math.max(1, Math.round(width * scale));
+                        const sh = Math.max(1, Math.round(height * scale));
+                        if(small.width !== sw || small.height !== sh) {
+                            small.width = sw;
+                            small.height = sh;
+                        }
+                        const blur = small.getContext('2d');
+                        blur.imageSmoothingQuality = 'high';
+                        blur.drawImage(bitmap, 0, 0, sw, sh);
+                        ctx.drawImage(small, 0, 0, width, height);
+                    }
+                } else {
+                    ctx.globalCompositeOperation = 'copy';
+                }
+            } catch(e) {
+                if(!this.userdata.warned) {
+                    this.userdata.warned = true;
+                    console.warn('Background frame unavailable:', e);
+                    displayWarning('Effet vidéo interrompu. L’image est masquée.');
+                }
+                this.userdata.worker?.terminate();
+                this.userdata.worker = null;
+                ctx.globalCompositeOperation = 'copy';
+            } finally {
+                ctx.fillStyle = '#162b28';
+                ctx.fillRect(0, 0, width, height);
+                ctx.globalCompositeOperation = 'source-over';
+                mask?.close();
+                bitmap?.close();
+            }
+            return true;
+        },
+    };
 }
 
 /**
@@ -220,7 +526,7 @@ async function workerSendReceive(worker, message, transfer) {
  */
 let filters = {
     'mirror-h': {
-        description: "Horizontal mirror",
+        description: "Miroir horizontal",
         draw: async function(src, ctx) {
             if(!(ctx instanceof CanvasRenderingContext2D))
                 throw new Error('bad context type');
@@ -236,7 +542,7 @@ let filters = {
         },
     },
     'mirror-v': {
-        description: "Vertical mirror",
+        description: "Miroir vertical",
         draw: async function(src, ctx) {
             if(!(ctx instanceof CanvasRenderingContext2D))
                 throw new Error('bad context type');
@@ -252,7 +558,7 @@ let filters = {
         },
     },
     'rotate': {
-        description: 'Rotate',
+        description: 'Rotation à 180°',
         draw: async function(src, ctx) {
             if(!(ctx instanceof CanvasRenderingContext2D))
                 throw new Error('bad context type');
@@ -267,117 +573,9 @@ let filters = {
             return true;
         },
     },
-    'background-blur': {
-        description: 'Background blur',
-        predicate: async function() {
-            let r = await fetch('/third-party/tasks-vision/vision_bundle.mjs', {
-                method: 'HEAD',
-            });
-            if(!r.ok) {
-                if(r.status !== 404)
-                    console.warn(
-                        `Fetch vision_bundle.mjs: ${r.status} ${r.statusText}`,
-                    );
-                return false;
-            }
-            return true;
-        },
-        init: async function() {
-            if(!(this instanceof Filter))
-                throw new Error('Bad type for this');
-            if(this.userdata.worker)
-                throw new Error("Worker already running (this shouldn't happen)")
-            this.userdata.worker = new Worker('/background-blur-worker.js');
-            await workerSendReceive(this.userdata.worker, {
-                model: '/third-party/tasks-vision/models/selfie_segmenter.tflite',
-            });
-        },
-        cleanup: async function() {
-            if(this.userdata.worker.onmessage) {
-                this.userdata.worker.onmessage(null);
-            }
-            this.userdata.worker.terminate();
-            this.userdata.worker = null;
-        },
-        draw: async function(src, ctx) {
-            let bitmap = await createImageBitmap(src);
-            try {
-                let result = await workerSendReceive(this.userdata.worker, {
-                    bitmap: bitmap,
-                    timestamp: performance.now(),
-                }, [bitmap]);
-
-                if(!result)
-                    return false;
-
-                let mask = result.mask;
-                bitmap = result.bitmap;
-
-                if(ctx.canvas.width !== src.videoWidth ||
-                   ctx.canvas.height !== src.videoHeight) {
-                    ctx.canvas.width = src.videoWidth;
-                    ctx.canvas.height = src.videoHeight;
-                }
-
-                // set the alpha mask, background is opaque
-                ctx.globalCompositeOperation = 'copy';
-                ctx.drawImage(mask, 0, 0);
-
-                // rather than blurring the original image, we first mask
-                // the background then blur, this avoids a halo effect
-                ctx.globalCompositeOperation = 'source-in';
-                ctx.drawImage(result.bitmap, 0, 0);
-		if('filter' in ctx) {
-                    ctx.globalCompositeOperation = 'copy';
-                    ctx.filter = `blur(${src.videoWidth / 48}px)`;
-                    ctx.drawImage(ctx.canvas, 0, 0);
-                    ctx.filter = 'none';
-		} else {
-		    // Safari bug 198416, context.filter is not supported.
-
-                    // Work around typescript inferring ctx as none
-                    ctx = /**@type{CanvasRenderingContext2D}*/(ctx);
-
-		    let scale = 24;
-		    let swidth = src.videoWidth / scale;
-		    let sheight = src.videoHeight / scale;
-		    if(!('canvas' in this.userdata))
-			this.userdata.canvas = document.createElement('canvas');
-                    /** @type {HTMLCanvasElement} */
-		    let c2 = this.userdata.canvas;
-		    if(c2.width !== swidth)
-			c2.width = swidth;
-		    if(c2.height !== sheight)
-			c2.height = sheight;
-		    let ctx2 = c2.getContext('2d');
-		    // scale down the background
-		    ctx2.globalCompositeOperation = 'copy';
-		    ctx2.drawImage(ctx.canvas,
-				   0, 0, src.videoWidth, src.videoHeight,
-				   0, 0, swidth, sheight,
-				  );
-		    // scale back up, composite atop the original background
-		    ctx.globalCompositeOperation = 'source-atop';
-		    ctx.drawImage(ctx2.canvas,
-				  0, 0,
-				  src.videoWidth / scale,
-				  src.videoHeight / scale,
-				  0, 0, src.videoWidth, src.videoHeight,
-				 );
-		}
-
-		// now draw the foreground
-                ctx.globalCompositeOperation = 'destination-atop';
-                ctx.drawImage(result.bitmap, 0, 0);
-                ctx.globalCompositeOperation = 'source-over';
-
-                mask.close();
-            } finally {
-                bitmap.close();
-            }
-            return true;
-        },
-    },
+    'background-blur': createBackgroundFilter('Flou du fond', 'blur'),
+    'background-solid': createBackgroundFilter('Fond uni', 'solid'),
+    'background-image': createBackgroundFilter('Image de fond', 'image'),
 };
 
 async function addFilters() {

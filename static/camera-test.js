@@ -73,6 +73,12 @@ function CameraTest(video, canvas, videoselect, audioselect) {
     this.ctx = null;
     /** @type {AudioContext} */
     this.audioContext = null;
+    /** @type {MediaStream|null} */
+    this.stream = null;
+    /** @type {Filter|null} */
+    this.filter = null;
+    this.filterRevision = 0;
+    this.streamRevision = 0;
 }
 
 CameraTest.prototype.reflectSettings = function() {
@@ -111,25 +117,56 @@ function stopStream(s) {
 }
 
 CameraTest.prototype.stopStream = async function() {
-    let old = /** @type{MediaStream} */(this.video.srcObject);
-    if(!old)
-        return;
+    this.filterRevision++;
+    this.streamRevision++;
+    let stream = this.stream;
+    let filter = this.filter;
+    this.stream = null;
+    this.filter = null;
     this.video.srcObject = null;
-    stopStream(old);
+    if(stream)
+        stopStream(stream);
+    if(filter)
+        await filter.stop();
 }
 
-CameraTest.prototype.setStream = async function(force) {
-    let old = /** @type{MediaStream} */(this.video.srcObject);
-    if(!force && !old)
+/** @param {filterDefinition|undefined} definition */
+CameraTest.prototype.setFilter = async function(definition) {
+    let revision = ++this.filterRevision;
+    let stream = this.stream;
+    let previous = this.filter;
+    this.filter = null;
+    this.video.srcObject = definition ? null : stream;
+    if(previous)
+        await previous.stop();
+    if(revision !== this.filterRevision || !definition ||
+       !stream?.getVideoTracks().length)
         return;
 
-    this.video.srcObject = null; // in case getUserMedia throws
+    let filter = new Filter(stream, definition);
+    await filter.start();
+    if(revision !== this.filterRevision) {
+        await filter.stop();
+        return;
+    }
+    this.filter = filter;
+    this.video.srcObject = filter.outputStream;
+}
+
+/**
+ * @param {boolean} force
+ * @param {{audio: boolean, video: boolean}} selection
+ */
+CameraTest.prototype.setStream = async function(force, selection) {
+    if(!force && !this.stream)
+        return;
+    await this.stopStream();
 
     let settings = getSettings();
     /** @type{boolean|MediaTrackConstraints} */
-    let a = settings.audio ? {deviceId: settings.audio} : false;
+    let a = (selection?.audio ?? true) && settings.audio ? {deviceId: settings.audio} : false;
     /** @type{boolean|MediaTrackConstraints} */
-    let v = settings.video ? {deviceId: settings.video} : false;
+    let v = (selection?.video ?? true) && settings.video ? {deviceId: settings.video} : false;
     if(v) {
         let resolution = settings.resolution;
         if(resolution) {
@@ -143,15 +180,23 @@ CameraTest.prototype.setStream = async function(force) {
         }
     }
 
-    let constraints = {audio: a, video: v};
-    try {
-        let stream = await navigator.mediaDevices.getUserMedia(constraints);
-        this.video.srcObject = stream;
-        await this.video.play();
-    } finally {
-        if(old)
-            stopStream(old);
+    if(!a && !v)
+        return;
+    let revision = this.streamRevision;
+    let stream = await navigator.mediaDevices.getUserMedia({audio: a, video: v});
+    if(revision !== this.streamRevision) {
+        stopStream(stream);
+        return;
     }
+    this.stream = stream;
+    try {
+        const name = getSettings().filter;
+        await this.setFilter(name === '' ? undefined : filters[name] || filters['background-blur']);
+    } catch(e) {
+        console.warn('Effet indisponible dans l’aperçu :', e);
+    }
+    if(this.video.srcObject)
+        await this.video.play();
 }
 
 CameraTest.prototype.startAnalyser = async function() {
@@ -165,7 +210,7 @@ CameraTest.prototype.startAnalyser = async function() {
     this.audioContext = new AudioContext();
     this.analyser = this.audioContext.createAnalyser();
     this.analyser.fftSize = 512;
-    let src = this.video.srcObject;
+    let src = this.stream;
     if(!(src instanceof MediaStream))
         throw new Error('Unexpected type for srcObject');
     let source = this.audioContext.createMediaStreamSource(src);
@@ -194,7 +239,7 @@ CameraTest.prototype.stopAnalyser = async function() {
 }
 
 CameraTest.prototype.setAnalyser = async function() {
-    if(this.video.srcObject) {
+    if(this.video.srcObject instanceof MediaStream && this.video.srcObject.getAudioTracks().length) {
         await this.startAnalyser();
     } else {
         await this.stopAnalyser();
@@ -251,8 +296,15 @@ CameraTest.prototype.drawFFT = function() {
     }
 }
 
-CameraTest.prototype.setMediaChoices = async function() {
+/**
+ * @param {{audio: boolean, video: boolean}} selection
+ */
+CameraTest.prototype.setMediaChoices = async function(selection) {
     let ds = await getPermissionsConstraints();
+    if(selection && !selection.audio)
+        delete ds.audio;
+    if(selection && !selection.video)
+        delete ds.video;
     if(!('video' in ds || 'audio' in ds))
         throw new Error('No device detected');
     let stream = await navigator.mediaDevices.getUserMedia(ds);
@@ -267,12 +319,12 @@ CameraTest.prototype.setMediaChoices = async function() {
             let label = d.label;
             if(d.kind === 'videoinput') {
                 if(!label)
-                    label = `Camera ${cn}`;
+                    label = `Caméra ${cn}`;
                 addSelectOption(this.videoselect, label, d.deviceId);
                 cn++;
             } else if(d.kind === 'audioinput') {
                 if(!label)
-                    label = `Microphone ${mn}`;
+                    label = `Micro ${mn}`;
                 addSelectOption(this.audioselect, label, d.deviceId);
                 mn++;
             }

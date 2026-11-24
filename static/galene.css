@@ -1033,6 +1033,19 @@ h1 {
     margin-top: 15px;
 }
 
+#backgroundimagecontrols {
+    margin-top: 0.75rem;
+}
+
+#backgroundimagecontrols label,
+#backgroundimagestatus {
+    display: block;
+}
+
+#backgroundimage {
+    max-width: 100%;
+}
+
 .sidenav-header {
     height: 56px;
 }

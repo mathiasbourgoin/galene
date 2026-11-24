@@ -107,6 +107,15 @@ function reflectSettings() {
     let settings = getSettings();
     let store = false;
 
+    // Apply the new defaults to tabs that already stored the old defaults.
+    if(!settings.privacyDefaultsApplied) {
+        settings.privacyDefaultsApplied = true;
+        settings.displayAll = true;
+        if(!settings.filter)
+            settings.filter = 'background-blur';
+        store = true;
+    }
+
     setLocalMute(settings.localMute);
 
     let videoselect = getSelectElement('videoselect');
@@ -125,15 +134,12 @@ function reflectSettings() {
     }
     audioselect.value = settings.audio;
 
-    if(settings.hasOwnProperty('filter')) {
-        getSelectElement('filterselect').value = settings.filter;
-    } else {
-        let s = getSelectElement('filterselect').value;
-        if(s) {
-            settings.filter = s;
-            store = true;
-        }
+    if(!settings.hasOwnProperty('filter') ||
+       (settings.filter === 'background-image' && !backgroundImage)) {
+        settings.filter = 'background-blur';
+        store = true;
     }
+    getSelectElement('filterselect').value = settings.filter;
 
     if(settings.hasOwnProperty('request')) {
         getSelectElement('requestselect').value = settings.request;
@@ -200,14 +206,7 @@ function reflectSettings() {
 
     if(store)
         storeSettings(settings);
-}
-
-/**
- * Returns true if we should use the mobile layout.  This should be kept
- * in sync with the CSS.
- */
-function isMobileLayout() {
-    return !!window.matchMedia('only screen and (max-width: 1024px)').matches
+    reflectBandwidthMode();
 }
 
 /**
@@ -217,10 +216,11 @@ function isMobileLayout() {
  * @param {boolean} [force]
  */
 function hideVideo(force) {
-    let mediadiv = document.getElementById('peers');
-    if(mediadiv.childElementCount > 0 && !force)
+    if(!force && document.querySelector('#peers .peer:not(.peer-hidden)'))
         return;
     setVisibility('video-container', false);
+    document.getElementById('empty-room').hidden =
+        document.body.dataset.callState !== 'connected';
     scheduleReconsiderDownRate();
 }
 
@@ -228,12 +228,10 @@ function hideVideo(force) {
  * Show the video pane.
  */
 function showVideo() {
-    let hasmedia = document.getElementById('peers').childElementCount > 0;
-    if(isMobileLayout()) {
-        setVisibility('show-video', false);
-        setVisibility('collapse-video', hasmedia);
-    }
+    let hasmedia = !!document.querySelector('#peers .peer:not(.peer-hidden)');
     setVisibility('video-container', hasmedia);
+    document.getElementById('empty-room').hidden = hasmedia ||
+        document.body.dataset.callState !== 'connected';
     scheduleReconsiderDownRate();
 }
 
@@ -261,6 +259,10 @@ function isFirefox() {
 function setConnected(connected) {
     let userbox = document.getElementById('profile');
     let connectionbox = document.getElementById('login-container');
+    document.body.dataset.callState = connected ? 'connected' : 'lobby';
+    document.getElementById(connected ? 'call-video-effects' : 'lobby-video-effects')
+        .appendChild(document.getElementById('filterform'));
+    document.getElementById('call-controls').hidden = !connected;
     if(connected) {
         clearChat();
         let testCamera =  /** @type{HTMLDetailsElement} */
@@ -274,11 +276,20 @@ function setConnected(connected) {
             scheduleReconsiderDownRate();
         }
     } else {
+        resetRoomTools();
+        resetReactions();
+        renderSpeakingQueue([]);
+        updateCameraOffTiles();
         userbox.classList.add('invisible');
         connectionbox.classList.remove('invisible');
         hideVideo();
+        selectCallPanel(null);
+        document.getElementById('invite-button').hidden = true;
+        /** @type {HTMLDialogElement} */(document.getElementById('invite-dialog')).close();
+        setInvitationPending(false);
         window.onresize = null;
     }
+    updateCallStatus();
 }
 
 /**
@@ -287,7 +298,6 @@ function setConnected(connected) {
  * @this {ServerConnection}
  */
 async function gotConnected() {
-    setConnected(true);
     await join();
 }
 
@@ -393,15 +403,19 @@ function onPeerConnection() {
  * @param {string} reason
  */
 function gotClose(code, reason) {
+    if(this !== serverConnection)
+        return;
     closeUpMedia();
     closeSafariStream();
+    let wasInCall = document.body.dataset.callState === 'connected';
     setConnected(false);
     if(code !== 1000) {
         console.warn('Socket close', code, reason);
+        setJoinError(wasInCall ? 'Connexion interrompue. Tu peux rejoindre le salon à nouveau.' :
+                     'Connexion au salon impossible. Réessaie dans un instant.');
     }
-    let form = document.getElementById('loginform');
-    if(!(form instanceof HTMLFormElement))
-        throw new Error('Bad type for loginform');
+    if(wasInCall)
+        document.getElementById('join-title').focus();
 }
 
 /**
@@ -425,6 +439,7 @@ function gotDownStream(c) {
     }
     c.onstatus = function(status) {
         setMediaStatus(c);
+        updateCallStatus();
     };
     c.onstats = gotDownStats;
     if(getSettings().activityDetection)
@@ -438,9 +453,7 @@ function setViewportHeight() {
     document.documentElement.style.setProperty(
         '--vh', `${window.innerHeight/100}px`,
     );
-    if (!getVisibility('left')) {
-        showVideo();
-    }
+    showVideo();
     // Ajust video component size
     resizePeers();
 }
@@ -451,25 +464,103 @@ addEventListener('orientationchange', setViewportHeight);
 
 getButtonElement('presentbutton').onclick = async function(e) {
     e.preventDefault();
-    let button = this;
-    if(!(button instanceof HTMLButtonElement))
-        throw new Error('Unexpected type for this.');
-    // there's a potential race condition here: the user might click the
-    // button a second time before the stream is set up and the button hidden.
-    button.disabled = true;
-    try {
-        let id = findUpMedia('camera');
-        if(!id)
-            await addLocalMedia();
-    } finally {
-        button.disabled = false;
-    }
+    let media = localMediaState();
+    await switchLocalMedia(media.audio, !media.video);
 };
 
-getButtonElement('unpresentbutton').onclick = function(e) {
-    e.preventDefault();
-    closeUpMedia('camera');
-    resizePeers();
+/**
+ * @typedef {{audio: boolean, video: boolean, micOn: boolean}} LocalMediaState
+ */
+
+/** @returns {LocalMediaState} */
+function localMediaState() {
+    let camera = findUpMedia('camera');
+    let stream = camera && camera.stream;
+    let audio = stream && stream.getAudioTracks().find(t => t.readyState === 'live');
+    let video = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
+    return {audio: !!audio, video: !!video, micOn: !!audio && audio.enabled};
+}
+
+let changingMedia = false;
+
+/**
+ * Replace the published camera stream using the existing Galène pipeline.
+ *
+ * @param {boolean} audio
+ * @param {boolean} video
+ */
+async function switchLocalMedia(audio, video) {
+    if(changingMedia || !serverConnection?.group ||
+       serverConnection.permissions.indexOf('present') < 0)
+        return;
+    changingMedia = true;
+    setButtonsVisibility();
+    try {
+        let camera = findUpMedia('camera');
+        if(camera && camera.stream.getVideoTracks().length && !video) {
+            if(audio) {
+                // Keep the current microphone live and release the camera.
+                await removeFilter(camera);
+                if(!camera.sc)
+                    return;
+                for(let track of camera.stream.getVideoTracks()) {
+                    track.stop();
+                    camera.stream.removeTrack(track);
+                }
+                delete camera.userdata.filterDefinition;
+                await replaceUpStream(camera);
+            } else {
+                camera.close();
+            }
+        } else {
+            await addLocalMedia(camera?.localId, {audio, video});
+        }
+    } finally {
+        changingMedia = false;
+        setButtonsVisibility();
+    }
+}
+
+/**
+ * @param {string} message
+ */
+function setJoinError(message) {
+    let target = document.getElementById('join-error');
+    target.textContent = message;
+    target.hidden = !message;
+}
+
+function updateCallStatus() {
+    let state = document.body.dataset.callState;
+    let label = 'Avant l’appel';
+    let canRetryMedia = false;
+    if(state === 'connecting') {
+        label = 'Connexion au salon…';
+    } else if(state === 'connected') {
+        let streams = [...Object.keys(serverConnection.up).map(id => serverConnection.up[id]),
+                       ...Object.keys(serverConnection.down).map(id => serverConnection.down[id])];
+        let interrupted = !navigator.onLine || streams.some(c =>
+            ['disconnected', 'failed'].indexOf(c.pc?.iceConnectionState) >= 0);
+        canRetryMedia = interrupted && navigator.onLine;
+        let connecting = streams.some(c =>
+            ['new', 'checking'].indexOf(c.pc?.iceConnectionState) >= 0);
+        label = interrupted ? 'Connexion média interrompue' :
+               connecting ? 'Connexion média en cours…' : 'En réunion';
+        if(!interrupted && !connecting && getSettings().lowBandwidth)
+            label = 'En réunion · Connexion faible';
+    }
+    let status = document.getElementById('connection-status');
+    if(status.textContent !== label)
+        status.textContent = label;
+    document.getElementById('media-retry').hidden = !canRetryMedia;
+    document.getElementById('connectbutton').toggleAttribute('disabled', state === 'connecting');
+}
+
+window.addEventListener('online', updateCallStatus);
+window.addEventListener('offline', updateCallStatus);
+getButtonElement('media-retry').onclick = () => {
+    renegotiateStreams();
+    document.getElementById('connection-status').textContent = 'Relance de la connexion média…';
 };
 
 /**
@@ -485,48 +576,36 @@ function setVisibility(id, visible) {
 }
 
 /**
- * getVisibility tells whether specified element is visible.
- *
- * @param {string} id
- */
-function getVisibility(id) {
-    let elt = document.getElementById(id);
-    return !elt.classList.contains('invisible');
-}
-
-/**
  * Shows and hides various UI elements depending on the protocol state.
  */
 function setButtonsVisibility() {
-    let connected = serverConnection && serverConnection.socket;
-    let permissions = serverConnection.permissions;
-    let canWebrtc = !(typeof RTCPeerConnection === 'undefined');
-    let canPresent = canWebrtc &&
-        ('mediaDevices' in navigator) &&
-        ('getUserMedia' in navigator.mediaDevices) &&
+    let permissions = serverConnection?.permissions || [];
+    let canWebrtc = typeof RTCPeerConnection !== 'undefined';
+    let canPresent = canWebrtc && !!navigator.mediaDevices?.getUserMedia &&
         permissions.indexOf('present') >= 0;
-    let canShare = canWebrtc &&
-        ('mediaDevices' in navigator) &&
-        ('getDisplayMedia' in navigator.mediaDevices) &&
+    let canShare = canWebrtc && !!navigator.mediaDevices?.getDisplayMedia &&
         permissions.indexOf('present') >= 0;
-    let local = !!findUpMedia('camera');
-    let mediacount = document.getElementById('peers').childElementCount;
-    let mobilelayout = isMobileLayout();
-
-    // don't allow multiple presentations
-    setVisibility('presentbutton', canPresent && !local);
-    setVisibility('unpresentbutton', local);
-
-    setVisibility('mutebutton', !connected || canPresent);
-
-    // allow multiple shared documents
-    setVisibility('sharebutton', canShare);
-
+    let media = localMediaState();
+    let sharing = !!findUpMedia('screenshare');
     setVisibility('mediaoptions', canPresent);
     setVisibility('sendform', canPresent);
     setVisibility('simulcastform', canPresent);
-
-    setVisibility('collapse-video', mediacount && mobilelayout);
+    getButtonElement('presentbutton').disabled = !canPresent || changingMedia;
+    getButtonElement('mutebutton').disabled = !canPresent || changingMedia;
+    getButtonElement('sharebutton').disabled = !canShare && !sharing;
+    getButtonElement('presentbutton').setAttribute('aria-pressed', String(media.video));
+    getButtonElement('mutebutton').setAttribute('aria-pressed', String(media.micOn));
+    getButtonElement('sharebutton').setAttribute('aria-pressed', String(sharing));
+    document.getElementById('camera-label').textContent = media.video ? 'Caméra active' : 'Caméra coupée';
+    document.getElementById('mic-label').textContent = media.micOn ? 'Micro actif' : 'Micro coupé';
+    document.getElementById('share-label').textContent = sharing ? 'Arrêter le partage' : 'Partager l’écran';
+    document.getElementById('invite-button').hidden = permissions.indexOf('token') < 0 ||
+        document.body.dataset.callState !== 'connected';
+    const reactions = getButtonElement('reactions-toggle');
+    reactions.hidden = !permissions.includes('message');
+    if(reactions.hidden)
+        setReactionPicker(false);
+    updateCallStatus();
 }
 
 /**
@@ -550,6 +629,7 @@ function setLocalMute(mute, reflect) {
     }
     if(reflect)
         updateSettings({localMute: mute});
+    setButtonsVisibility();
 }
 
 getSelectElement('videoselect').onchange = function(e) {
@@ -601,36 +681,156 @@ getInputElement('hqaudiobox').onchange = function(e) {
     replaceCameraStream();
 };
 
-document.getElementById('mutebutton').onclick = function(e) {
+getButtonElement('mutebutton').onclick = async function(e) {
     e.preventDefault();
-    let localMute = getSettings().localMute;
-    if (localMute && !findUpMedia('camera')) {
-        displayMessage('Please use Enable to enable your camera or microphone.');
+    let media = localMediaState();
+    if(media.audio) {
+        setLocalMute(media.micOn, true);
     } else {
-        localMute = !localMute;
-        setLocalMute(localMute, true);
+        await switchLocalMedia(true, media.video);
+        if(localMediaState().audio)
+            setLocalMute(false, true);
     }
 };
 
-document.getElementById('sharebutton').onclick = function(e) {
+getButtonElement('sharebutton').onclick = async function(e) {
     e.preventDefault();
-    addShareMedia();
+    if(findUpMedia('screenshare')) {
+        closeUpMedia('screenshare');
+        setButtonsVisibility();
+        return;
+    }
+    getButtonElement('sharebutton').disabled = true;
+    try {
+        await addShareMedia();
+    } finally {
+        setButtonsVisibility();
+    }
 };
 
-getSelectElement('filterselect').onchange = async function(e) {
-    if(!(this instanceof HTMLSelectElement))
-        throw new Error('Unexpected type for this');
-    updateSettings({filter: this.value});
-    let c = findUpMedia('camera');
-    if(c) {
-        let filter = (this.value && filters[this.value]) || null;
+let cameraFilterUpdate = Promise.resolve();
+
+/** @param {string} name */
+async function applyCameraFilter(name) {
+    updateSettings({filter: name});
+    cameraFilterUpdate = cameraFilterUpdate.then(async () => {
+        if(getSettings().filter !== name)
+            return;
+
+        let c = findUpMedia('camera');
+        let filter = filters[name];
+        if(!c || !c.stream?.getVideoTracks().length) {
+            if(cameraTest?.stream)
+                await cameraTest.setFilter(filter);
+            return;
+        }
+
+        if(filter?.protectBackground && !c.userdata.filter) {
+            // Detach the unfiltered sender while the protected stream starts.
+            try {
+                await Promise.all(c.pc.getSenders()
+                    .filter(sender => sender.track?.kind === 'video')
+                    .map(sender => sender.replaceTrack(null)));
+            } catch(e) {
+                c.close();
+                throw e;
+            }
+        }
         if(filter)
             c.userdata.filterDefinition = filter;
         else
             delete c.userdata.filterDefinition;
-        replaceUpStream(c);
-    }
-};
+        await replaceUpStream(c);
+    }).catch(displayError);
+    await cameraFilterUpdate;
+}
+
+const filterSelector = getSelectElement('filterselect');
+filterSelector.onchange = () => applyCameraFilter(filterSelector.value);
+
+function configureBackgroundImageControl() {
+    let option = Array.from(filterSelector.options).find(
+        option => option.value === 'background-image',
+    );
+    if(!option)
+        return;
+
+    let input = getInputElement('backgroundimage');
+    let play = getButtonElement('playbackgroundvideo');
+    let clear = document.getElementById('clearbackgroundimage');
+    let status = document.getElementById('backgroundimagestatus');
+    let revision = 0;
+    option.disabled = true;
+    document.getElementById('backgroundimagecontrols').hidden = false;
+
+    input.onchange = async () => {
+        let file = input.files?.[0];
+        if(!file)
+            return;
+
+        let pending = ++revision;
+        status.textContent = 'Chargement du fond…';
+        try {
+            let image = await decodeBackgroundImage(file);
+            if(pending !== revision) {
+                image.close?.();
+                return;
+            }
+            setBackgroundImage(image);
+            option.disabled = false;
+            play.hidden = !image.play;
+            clear.hidden = false;
+            if(filterSelector.value !== option.value) {
+                filterSelector.value = option.value;
+                await applyCameraFilter(option.value);
+            }
+            if(pending === revision) {
+                let stream = findUpMedia('camera')?.stream || cameraTest?.stream;
+                status.textContent = stream?.getVideoTracks().length ?
+                    image.play ? 'Fond chargé. Si le fond reste fixe, clique sur Animer le fond.' :
+                        'Fond chargé. Le fichier reste dans cet onglet.' :
+                    'Fond chargé. Active la caméra ou démarre le test pour le voir.';
+            }
+        } catch(e) {
+            if(pending === revision)
+                status.textContent = e instanceof Error ? e.message : 'Impossible de charger le fond.';
+        } finally {
+            if(pending === revision)
+                input.value = '';
+        }
+    };
+
+    play.onclick = async () => {
+        let image = backgroundImage;
+        if(!image?.play)
+            return;
+        try {
+            await image.play();
+            if(image === backgroundImage)
+                status.textContent = 'Animation lancée.';
+        } catch(e) {
+            if(image === backgroundImage)
+                status.textContent = e.name === 'NotAllowedError' ?
+                    'Le navigateur bloque la lecture du fond.' :
+                    'Le navigateur n’a pas pu lancer la vidéo WebM.';
+        }
+    };
+
+    clear.onclick = async () => {
+        revision++;
+        input.value = '';
+        setBackgroundImage(null);
+        option.disabled = true;
+        play.hidden = true;
+        clear.hidden = true;
+        status.textContent = '';
+        if(filterSelector.value === option.value) {
+            filterSelector.value = 'background-blur';
+            status.textContent = 'Fond personnalisé retiré. Le flou est actif.';
+            await applyCameraFilter('background-blur');
+        }
+    };
+}
 
 /**
  * Returns the desired max video throughput depending on the settings.
@@ -714,8 +914,7 @@ getSelectElement('requestselect').onchange = function(e) {
     if(!(this instanceof HTMLSelectElement))
         throw new Error('Unexpected type for this');
     updateSettings({request: this.value});
-    serverConnection.request(mapRequest(this.value));
-    reconsiderDownRate();
+    requestRoomMedia();
 };
 
 const activityDetectionInterval = 200;
@@ -741,11 +940,15 @@ getInputElement('displayallbox').onchange = function(e) {
     if(!(this instanceof HTMLInputElement))
         throw new Error('Unexpected type for this');
     updateSettings({displayAll: this.checked});
+    if(!serverConnection)
+        return;
     for(let id in serverConnection.down) {
         let c = serverConnection.down[id];
         let elt = document.getElementById('peer-' + c.localId);
-        showHideMedia(c, elt);
+        if(elt)
+            showHideMedia(c, elt);
     }
+    updateCameraOffTiles();
 };
 
 
@@ -959,6 +1162,7 @@ function newUpStream(localId) {
     let c = serverConnection.newUpStream(localId);
     c.onstatus = function(status) {
         setMediaStatus(c);
+        updateCallStatus();
     };
     c.onerror = function(e) {
         console.error(e);
@@ -1076,6 +1280,7 @@ async function setUpStream(c, stream) {
     if(c.stream !== null)
         throw new Error("Setting nonempty stream");
 
+    const protectBackground = c.userdata.filterDefinition?.protectBackground;
     c.setStream(stream);
 
     // set up the handler early, in case setFilter fails.
@@ -1089,7 +1294,18 @@ async function setUpStream(c, stream) {
         }
     }
 
-    await setFilter(c);
+    try {
+        await setFilter(c);
+    } catch(e) {
+        if(!protectBackground || !c.sc)
+            throw e;
+        // A browser unable to capture a filtered canvas can still send audio.
+        stream.getVideoTracks().forEach(track => track.stop());
+        c.setStream(new MediaStream(stream.getAudioTracks()));
+        displayWarning('Effet vidéo indisponible. La caméra est coupée.');
+    }
+    if(!c.sc)
+        throw new Error('Stream closed during setup');
 
     /**
      * @param {MediaStreamTrack} t
@@ -1142,7 +1358,7 @@ async function setUpStream(c, stream) {
         }
         let tr = c.pc.addTransceiver(t, {
             direction: 'sendonly',
-            streams: [stream],
+            streams: [c.stream],
             sendEncodings: encodings,
         });
 
@@ -1162,7 +1378,8 @@ async function setUpStream(c, stream) {
     c.stream.getTracks().forEach(addUpTrack);
 
     stream.onaddtrack = function(e) {
-        addUpTrack(e.track);
+        if(!protectBackground || e.track.kind !== 'video')
+            addUpTrack(e.track);
     };
 
     stream.onremovetrack = function(e) {
@@ -1252,20 +1469,39 @@ async function replaceUpStreams(label) {
  */
 function replaceCameraStream() {
     let c = findUpMedia('camera');
-    if(c)
-        addLocalMedia(c.localId);
+    if(c) {
+        let media = localMediaState();
+        let settings = getSettings();
+        addLocalMedia(c.localId, {
+            audio: media.audio && !!settings.audio,
+            video: media.video && !!settings.video,
+        }, true);
+    }
 }
 
 /**
  * @param {string} [localId]
+ * @param {{audio: boolean, video: boolean}} [selection]
+ * @param {boolean} [releaseFirst]
  */
-async function addLocalMedia(localId) {
+async function addLocalMedia(localId, selection, releaseFirst) {
+    let connection = serverConnection;
     let settings = getSettings();
+    let old = connection.findByLocalId(localId);
+    let wantAudio = selection ? selection.audio : !!settings.audio;
+    let wantVideo = selection ? selection.video : !!settings.video;
 
-    /** @type{boolean|MediaTrackConstraints} */
-    let audio = settings.audio ? {deviceId: settings.audio} : false;
-    /** @type{boolean|MediaTrackConstraints} */
-    let video = settings.video ? {deviceId: settings.video} : false;
+    if(!wantAudio && !wantVideo) {
+        if(old)
+            old.close();
+        setButtonsVisibility();
+        return;
+    }
+
+    /** @type{false|MediaTrackConstraints} */
+    let audio = wantAudio ? (settings.audio ? {deviceId: settings.audio} : {}) : false;
+    /** @type{false|MediaTrackConstraints} */
+    let video = wantVideo ? (settings.video ? {deviceId: settings.video} : {}) : false;
 
     if(video) {
         let resolution = settings.resolution;
@@ -1288,9 +1524,7 @@ async function addLocalMedia(localId) {
         }
     }
 
-    let old = serverConnection.findByLocalId(localId);
-    if(old) {
-        // make sure that the camera is released before we try to reopen it
+    if(old && releaseFirst) {
         await removeFilter(old);
         stopStream(old.stream);
     }
@@ -1301,17 +1535,38 @@ async function addLocalMedia(localId) {
     try {
         stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch(e) {
+        if(old && releaseFirst)
+            old.close();
         displayError(e);
         return;
     }
 
-    setMediaChoices(true);
+    if(connection !== serverConnection || !connection.group) {
+        stopStream(stream);
+        return;
+    }
 
+    if(old && !releaseFirst) {
+        await removeFilter(old);
+        if(connection !== serverConnection || !connection.group) {
+            stopStream(stream);
+            return;
+        }
+        stopStream(old.stream);
+    }
+    setMediaChoices(true);
+    const audioTrack = stream.getAudioTracks()[0];
+    const videoTrack = stream.getVideoTracks()[0];
+    if(audioTrack && !settings.audio)
+        updateSettings({audio: audioTrack.getSettings().deviceId || 'default'});
+    if(videoTrack && !settings.video)
+        updateSettings({video: videoTrack.getSettings().deviceId || 'default'});
     let c;
 
     try {
         c = newUpStream(localId);
     } catch(e) {
+        stopStream(stream);
         console.log(e);
         displayError(e);
         return;
@@ -1319,13 +1574,8 @@ async function addLocalMedia(localId) {
 
     c.label = 'camera';
 
-    if(video && settings.filter) {
-        let filter = filters[settings.filter];
-        if(filter)
-            c.userdata.filterDefinition = filter;
-        else
-            displayWarning(`Unknown filter ${settings.filter}`);
-    }
+    if(video && settings.filter !== '')
+        c.userdata.filterDefinition = filters[settings.filter] || filters['background-blur'];
 
     try {
         await setUpStream(c, stream);
@@ -1341,6 +1591,7 @@ async function addLocalMedia(localId) {
 let safariScreenshareDone = false;
 
 async function addShareMedia() {
+    let connection = serverConnection;
     if(!safariScreenshareDone) {
         if(isSafari()) {
             let ok = confirm(
@@ -1370,10 +1621,23 @@ async function addShareMedia() {
         return;
     }
 
-    let c = newUpStream();
-    c.label = 'screenshare';
-    await setUpStream(c, stream);
-    await setMedia(c);
+    if(connection !== serverConnection || !connection.group) {
+        stopStream(stream);
+        return;
+    }
+    let c = null;
+    try {
+        c = newUpStream();
+        c.label = 'screenshare';
+        await setUpStream(c, stream);
+        await setMedia(c);
+    } catch(error) {
+        if(c)
+            c.close();
+        else
+            stopStream(stream);
+        displayError(error);
+    }
     setButtonsVisibility();
 }
 
@@ -1545,7 +1809,7 @@ function reconsiderDownRate(id) {
     let c = serverConnection.down[id];
     if(!c)
         throw new Error("Unknown down stream");
-    let normalrequest = mapRequestLabel(getSettings().request, c.label);
+    let normalrequest = mapRequestLabel(effectiveReceiveMode(), c.label);
 
     let requestlow = mapVideoToLow(normalrequest);
     if(requestlow === null)
@@ -1559,7 +1823,7 @@ function reconsiderDownRate(id) {
         let media = /** @type {HTMLVideoElement} */
             (document.getElementById('media-' + c.localId));
         if(!media)
-            throw new Error("No media for stream");
+            return;
         let w = media.scrollWidth;
         let h = media.scrollHeight;
         if(w && h && w * h <= 320 * 240) {
@@ -1608,9 +1872,14 @@ async function setMedia(c, mirror, video) {
         div = document.createElement('div');
         div.id = 'peer-' + c.localId;
         div.classList.add('peer');
-        let peersdiv = document.getElementById('peers');
+        let peersdiv = document.getElementById('participant-tiles');
         peersdiv.appendChild(div);
     }
+
+    if(c.label === 'screenshare')
+        div.dataset.shareOwner = c.up ? serverConnection.id : c.source;
+    else
+        delete div.dataset.shareOwner;
 
     showHideMedia(c, div)
 
@@ -1677,21 +1946,39 @@ async function setMedia(c, mirror, video) {
  * @param {HTMLElement} elt
  */
 function showHideMedia(c, elt) {
-    let display = c.up || getSettings().displayAll;
-    if(!display && c.stream) {
-        let tracks = c.stream.getTracks();
-        for(let i = 0; i < tracks.length; i++) {
-            let t = tracks[i];
-            if(t.kind === 'video') {
-                display = true;
-                break;
-            }
+    let hasVideo = !!c.stream?.getVideoTracks().some(track => track.readyState === 'live');
+    elt.classList.toggle('ux-audio-only', !hasVideo);
+    elt.classList.toggle('peer-hidden', !(c.up || hasVideo || getSettings().displayAll));
+}
+
+function updateCameraOffTiles() {
+    const peers = document.getElementById('participant-tiles');
+    const users = document.body.dataset.callState === 'connected' && getSettings().displayAll ?
+        Object.entries(serverConnection.users).filter(([id, user]) =>
+            id !== serverConnection.id && !user.permissions.includes('system') &&
+            !Object.values(user.streams).some(stream => stream.audio || stream.video)) : [];
+    const pending = new Map(users.map(([id, user]) => [id, user.username || 'Anonyme']));
+    for(const peer of peers.querySelectorAll('[data-camera-off]')) {
+        const id = peer.getAttribute('data-camera-off');
+        if(!pending.has(id)) {
+            peer.remove();
+        } else {
+            peer.querySelector('.label').textContent = pending.get(id);
+            pending.delete(id);
         }
     }
-    if(display)
-        elt.classList.remove('peer-hidden');
-    else
-        elt.classList.add('peer-hidden');
+    for(const [id, name] of pending) {
+        const peer = document.createElement('div');
+        peer.className = 'peer ux-audio-only';
+        peer.dataset.cameraOff = id;
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.textContent = name;
+        peer.appendChild(label);
+        peers.appendChild(peer);
+    }
+    showVideo();
+    resizePeers();
 }
 
 /**
@@ -1875,16 +2162,18 @@ function registerControlHandlers(localId, media, container) {
  * @param {string} localId
  */
 function delMedia(localId) {
-    let mediadiv = document.getElementById('peers');
     let peer = document.getElementById('peer-' + localId);
-    if(!peer)
-        throw new Error('Removing unknown media');
+    if(!peer) {
+        setButtonsVisibility();
+        return;
+    }
 
     let media = /** @type{HTMLVideoElement} */
         (document.getElementById('media-' + localId));
 
-    media.srcObject = null;
-    mediadiv.removeChild(peer);
+    if(media)
+        media.srcObject = null;
+    peer.remove();
 
     setButtonsVisibility();
     resizePeers();
@@ -1959,19 +2248,22 @@ function resizePeers() {
     // Window resize can call this method too early
     if (!serverConnection)
         return;
-    let count =
-        Object.keys(serverConnection.up).length +
-        Object.keys(serverConnection.down).length;
     let peers = document.getElementById('peers');
+    if(updatePresentationLayout()) {
+        peers.style.removeProperty('grid-template-columns');
+        for(const media of peers.querySelectorAll('.media')) {
+            if(media instanceof HTMLMediaElement)
+                media.style.removeProperty('max-height');
+        }
+        return;
+    }
+    let count = peers.querySelectorAll('.peer:not(.peer-hidden)').length;
     let columns = Math.ceil(Math.sqrt(count));
     if (!count)
         // No video, nothing to resize.
         return;
     let container = document.getElementById("video-container");
-    // Peers div has total padding of 40px, we remove 40 on offsetHeight
-    // Grid has row-gap of 5px
     let rows = Math.ceil(count / columns);
-    let margins = (rows - 1) * 5 + 40;
 
     if (count <= 2 && container.offsetHeight > container.offsetWidth) {
         peers.style['grid-template-columns'] = "repeat(1, 1fr)";
@@ -1981,6 +2273,7 @@ function resizePeers() {
     }
     if (count === 1)
         return;
+    let margins = (rows - 1) * 5 + 40;
     let max_video_height = (peers.offsetHeight - margins) / rows;
     let media_list = peers.querySelectorAll(".media");
     for(let i = 0; i < media_list.length; i++) {
@@ -2031,72 +2324,158 @@ function dateToInput(d) {
     return dd.toISOString().slice(0, -1);
 }
 
-function inviteMenu() {
-    let d = /** @type {HTMLDialogElement} */
-        (document.getElementById('invite-dialog'));
-    if(!('HTMLDialogElement' in window) || !d.showModal) {
-        displayError("This browser doesn't support modal dialogs");
-        return;
-    }
-    d.returnValue = '';
-    let c = getButtonElement('invite-cancel');
-    c.onclick = function(e) { d.close('cancel'); };
-    let u = getInputElement('invite-username');
-    u.value = '';
-    let now = new Date();
-    now.setMilliseconds(0);
-    now.setSeconds(0);
-    let nb = getInputElement('invite-not-before');
-    nb.min = dateToInput(now);
-    let ex = getInputElement('invite-expires');
-    let expires = new Date(now);
-    expires.setDate(expires.getDate() + 2);
-    ex.min = dateToInput(now);
-    ex.value = dateToInput(expires);
-    d.showModal();
+let invitationPending = false;
+
+/** @param {boolean} pending */
+function setInvitationPending(pending) {
+    invitationPending = pending;
+    getButtonElement('invite-submit').disabled = pending;
 }
 
-document.getElementById('invite-dialog').onclose = function(e) {
-    if(!(this instanceof HTMLDialogElement))
-        throw new Error('Unexpected type for this');
-    let dialog = /** @type {HTMLDialogElement} */(this);
-    if(dialog.returnValue !== 'invite')
+function inviteMenu() {
+    let dialog = /** @type {HTMLDialogElement} */(document.getElementById('invite-dialog'));
+    if(dialog.open)
         return;
-    let u = getInputElement('invite-username');
-    let username = u.value.trim() || null;
-    let nb = getInputElement('invite-not-before');
-    let notBefore = null;
-    if(nb.value) {
-        try {
-            notBefore = dateFromInput(nb.value);
-        } catch(e) {
-            displayError(`Couldn't parse ${nb.value}: ${e.message}`);
-            return;
-        }
+    let start = getInputElement('invite-not-before');
+    let expires = getInputElement('invite-expires');
+    let now = new Date();
+    now.setSeconds(0, 0);
+    start.min = expires.min = dateToInput(now);
+    if(!invitationPending) {
+        start.value = '';
+        getInputElement('invite-username').value = '';
+        getSelectElement('invite-duration').value = '24';
+        expires.value = dateToInput(new Date(now.getTime() + units.d));
+        document.getElementById('invite-custom').hidden = true;
+        document.getElementById('invite-result').hidden = true;
+        document.getElementById('invite-status').textContent = '';
     }
-    let ex = getInputElement('invite-expires');
-    let expires = null;
-    if(ex.value) {
-        try {
-            expires = dateFromInput(ex.value);
-        } catch(e) {
-            displayError(`Couldn't parse ${ex.value}: ${e.message}`);
-            return;
-        }
-    }
-    let template = {}
-    if(username)
-        template.username = username;
-    if(notBefore)
-        template['not-before'] = notBefore;
-    if(expires)
-        template.expires = expires;
-    makeToken(template);
+    dialog.showModal();
+}
+
+getButtonElement('invite-button').onclick = inviteMenu;
+getButtonElement('invite-cancel').onclick = () => {
+    /** @type {HTMLDialogElement} */(document.getElementById('invite-dialog')).close();
 };
 
-/**
- * @param {HTMLElement} elt
- */
+getSelectElement('invite-duration').onchange = function() {
+    let custom = getSelectElement('invite-duration').value === 'custom';
+    document.getElementById('invite-custom').hidden = !custom;
+    if(custom)
+        document.getElementById('invite-options').setAttribute('open', '');
+};
+
+document.getElementById('invite-form').onsubmit = function(e) {
+    e.preventDefault();
+    if(invitationPending)
+        return;
+    let status = document.getElementById('invite-status');
+    if(makeTokenPredicate()) {
+        status.textContent = 'Tu ne peux pas créer d’invitation dans ce salon.';
+        return;
+    }
+    let duration = getSelectElement('invite-duration').value;
+    let start = getInputElement('invite-not-before').value;
+    let expires = getInputElement('invite-expires').value;
+    let username = getInputElement('invite-username').value.trim();
+    let template = {};
+    try {
+        if(username)
+            template.username = username;
+        if(start)
+            template['not-before'] = dateFromInput(start);
+        if(duration === 'custom') {
+            if(!expires)
+                throw new Error('Choisis une date d’expiration.');
+            template.expires = dateFromInput(expires);
+            if(template.expires <= (template['not-before'] || new Date()))
+                throw new Error('Choisis une expiration après le début du lien.');
+        } else if(start) {
+            template.expires = new Date(template['not-before'].getTime() + Number(duration) * units.h);
+        } else {
+            template.expires = Number(duration) * units.h;
+        }
+        document.getElementById('invite-result').hidden = true;
+        status.textContent = 'Création du lien…';
+        setInvitationPending(true);
+        makeToken(template);
+    } catch(error) {
+        status.textContent = error.message;
+        setInvitationPending(false);
+    }
+};
+
+getButtonElement('invite-copy').onclick = async function() {
+    let field = getInputElement('invite-link');
+    let status = document.getElementById('invite-status');
+    try {
+        await navigator.clipboard.writeText(field.value);
+        status.textContent = 'Lien d’invitation copié.';
+    } catch(error) {
+        field.focus();
+        field.select();
+        status.textContent = 'Lien sélectionné. Utilise la commande Copier de ton appareil.';
+    }
+};
+
+/** @param {unknown} value */
+function speakingTicket(value) {
+    if(value === true)
+        return 0; // Clients loaded before the speaking queue send a boolean.
+    if(typeof value === 'number' && value > 0 && Number.isSafeInteger(value))
+        return value;
+    return null;
+}
+
+function speakingQueue() {
+    return Object.entries(serverConnection.users)
+        .map(([id, user]) => ({id, user, ticket: speakingTicket(user.data.raisehand)}))
+        .filter(entry => entry.ticket !== null)
+        .sort((a, b) => a.ticket - b.ticket || (a.id < b.id ? -1 : 1));
+}
+
+/** @param {boolean} raised */
+function setHandRaised(raised) {
+    const queue = speakingQueue();
+    if(raised === queue.some(entry => entry.id === serverConnection.id))
+        return;
+    // Put a new request after the last visible one. Simultaneous requests
+    // can get the same ticket and are ordered consistently by participant ID.
+    const last = queue[queue.length - 1];
+    const ticket = last ? Math.min(last.ticket + 1, Number.MAX_SAFE_INTEGER) : 1;
+    serverConnection.userAction('setdata', serverConnection.id, {
+        raisehand: raised ? ticket : null,
+    });
+}
+
+/** @param {ReturnType<typeof speakingQueue>} queue */
+function renderSpeakingQueue(queue) {
+    const ownId = serverConnection?.id;
+    const position = queue.findIndex(entry => entry.id === ownId) + 1;
+    const list = document.getElementById('speaking-order');
+    list.replaceChildren(...queue.map(({id, user}) => {
+        const item = document.createElement('li');
+        item.textContent = user.username || 'Anonyme';
+        if(id === ownId) {
+            item.classList.add('ux-own-turn');
+            item.append(' (toi)');
+        }
+        return item;
+    }));
+    document.getElementById('speaking-queue').hidden = queue.length === 0;
+    const label = position === 1 ? 'Terminer mon tour' :
+        position > 1 ? 'Quitter la file' : 'Lever la main';
+    const status = position === 1 ? 'À toi de parler' :
+        position > 1 ? `${position} / ${queue.length} dans la file` : '';
+    const labelElement = document.getElementById('hand-label');
+    const statusElement = document.getElementById('hand-position');
+    if(labelElement.textContent !== label)
+        labelElement.textContent = label;
+    if(statusElement.textContent !== status)
+        statusElement.textContent = status;
+}
+
+/** @param {HTMLElement} elt */
 function userMenu(elt) {
     if(!elt.id.startsWith('user-'))
         throw new Error('Unexpected id for user menu');
@@ -2106,49 +2485,39 @@ function userMenu(elt) {
         throw new Error("Couldn't find user")
     let items = [];
     if(id === serverConnection.id) {
-        let mydata = serverConnection.users[serverConnection.id].data;
-        if(mydata['raisehand'])
-            items.push({label: 'Unraise hand', onClick: () => {
-                serverConnection.userAction(
-                    'setdata', serverConnection.id, {'raisehand': null},
-                );
-            }});
-        else
-            items.push({label: 'Raise hand', onClick: () => {
-                serverConnection.userAction(
-                    'setdata', serverConnection.id, {'raisehand': true},
-                );
-            }});
+        const raised = speakingTicket(user.data.raisehand) !== null;
+        items.push({label: raised ? 'Baisser la main' : 'Lever la main',
+                    onClick: () => setHandRaised(!raised)});
         if(serverConnection.version !== "1" &&
            serverConnection.permissions.indexOf('token') >= 0) {
-            items.push({label: 'Invite user', onClick: () => {
+            items.push({label: 'Inviter une personne', onClick: () => {
                 inviteMenu();
             }});
         }
         if(serverConnection.permissions.indexOf('present') >= 0 && canFile())
-            items.push({label: 'Broadcast file', onClick: presentFile});
-        items.push({label: 'Restart media', onClick: renegotiateStreams});
+            items.push({label: 'Diffuser un fichier', onClick: presentFile});
+        items.push({label: 'Relancer le son et la vidéo', onClick: renegotiateStreams});
     } else {
-        items.push({label: 'Send file', onClick: () => {
+        items.push({label: 'Envoyer un fichier', onClick: () => {
             sendFile(id);
         }});
         if(serverConnection.permissions.indexOf('op') >= 0) {
             items.push({type: 'seperator'}); // sic
             if(user.permissions.indexOf('present') >= 0)
-                items.push({label: 'Forbid presenting', onClick: () => {
+                items.push({label: 'Retirer le droit de présenter', onClick: () => {
                     serverConnection.userAction('unpresent', id);
                 }});
             else
-                items.push({label: 'Allow presenting', onClick: () => {
+                items.push({label: 'Autoriser à présenter', onClick: () => {
                     serverConnection.userAction('present', id);
                 }});
-            items.push({label: 'Mute', onClick: () => {
+            items.push({label: 'Couper le micro', onClick: () => {
                 serverConnection.userMessage('mute', id);
             }});
-            items.push({label: 'Kick out', onClick: () => {
+            items.push({label: 'Exclure du salon', onClick: () => {
                 serverConnection.userAction('kick', id);
             }});
-            items.push({label: 'Identify', onClick: () => {
+            items.push({label: 'Identifier', onClick: () => {
                 serverConnection.userAction('identify', id);
             }});
         }
@@ -2168,6 +2537,15 @@ function addUser(id, userinfo) {
     let user = document.createElement('div');
     user.id = 'user-' + id;
     user.classList.add("user-p");
+    user.tabIndex = 0;
+    user.setAttribute('role', 'button');
+    user.setAttribute('aria-haspopup', 'menu');
+    user.addEventListener('keydown', event => {
+        if(event.key !== 'Enter' && event.key !== ' ')
+            return;
+        event.preventDefault();
+        userMenu(user);
+    });
     setUserStatus(id, user, userinfo);
     user.addEventListener('click', function(e) {
         let elt = e.currentTarget;
@@ -2224,7 +2602,7 @@ function changeUser(id, userinfo) {
  */
 function setUserStatus(id, elt, userinfo) {
     elt.textContent = userinfo.username ? userinfo.username : '(anon)';
-    if(userinfo.data.raisehand)
+    if(speakingTicket(userinfo.data.raisehand) !== null)
         elt.classList.add('user-status-raisehand');
     else
         elt.classList.remove('user-status-raisehand');
@@ -2272,6 +2650,7 @@ function gotUser(id, kind) {
         break;
     case 'delete':
         delUser(id);
+        reactionSenders.delete(id);
         if(Object.keys(serverConnection.users).length < 3)
             scheduleReconsiderParameters();
         break;
@@ -2282,6 +2661,11 @@ function gotUser(id, kind) {
         console.warn('Unknown user kind', kind);
         break;
     }
+    let count = Object.keys(serverConnection.users).filter(id => serverConnection.users[id].permissions.indexOf('system') < 0).length;
+    let badge = document.getElementById('participant-count');
+    badge.textContent = count ? String(count) : '';
+    renderSpeakingQueue(speakingQueue());
+    updateCameraOffTiles();
 }
 
 function displayUsername() {
@@ -2298,6 +2682,7 @@ function displayUsername() {
     document.getElementById('permspan').textContent = text;
 }
 
+/** @type {{audio: boolean, video: boolean}|null} */
 let presentRequested = null;
 
 /**
@@ -2360,6 +2745,8 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
     let present = presentRequested;
     presentRequested = null;
 
+    if(this !== serverConnection)
+        return;
     switch(kind) {
     case 'fail':
         if(probingState === 'probing' && error === 'need-username') {
@@ -2367,7 +2754,10 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
             setVisibility('passwordform', false);
         } else {
             token = null;
-            displayError('The server said: ' + message);
+            setJoinError(error === 'not-authorised' || /not authorised/i.test(message || '') ?
+                'Accès refusé. Vérifie le nom et le mot de passe du salon.' :
+                'Impossible de rejoindre le salon. ' + (message || 'Réessaie.'));
+            getInputElement('password').focus();
         }
         closeSafariStream();
         this.close();
@@ -2398,10 +2788,16 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
         } else {
             token = null;
         }
+        if(kind === 'join') {
+            setConnected(true);
+            showVideo();
+            document.getElementById('mainrow').focus();
+        }
         // don't discard endPoint and friends
         for(let key in status)
             groupStatus[key] = status[key];
         setTitle((status && status.displayName) || capitalise(group));
+        reflectSharedBoard(data?.sharedBoard);
         displayUsername();
         setButtonsVisibility();
         setChangePassword(pwAuth && !!groupStatus.canChangePassword &&
@@ -2421,8 +2817,7 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
 
     let input = /** @type{HTMLTextAreaElement} */
         (document.getElementById('input'));
-    input.placeholder = 'Type /help for help';
-    setTimeout(() => {input.placeholder = '';}, 8000);
+    input.placeholder = 'Écrire un message';
 
     if(status.locked)
         displayWarning('This group is locked');
@@ -2430,30 +2825,20 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
     if(typeof RTCPeerConnection === 'undefined')
         displayWarning("This browser doesn't support WebRTC");
     else
-        this.request(mapRequest(getSettings().request));
+        this.request(mapRequest(effectiveReceiveMode()));
 
     if(('mediaDevices' in navigator) &&
        ('getUserMedia' in navigator.mediaDevices) &&
        serverConnection.permissions.indexOf('present') >= 0 &&
        !findUpMedia('camera')) {
-        if(present) {
-            if(present === 'mike')
-                updateSettings({video: ''});
-            else if(present === 'both')
-                delSetting('video');
-            reflectSettings();
-
-            let button = getButtonElement('presentbutton');
-            button.disabled = true;
-            try {
-                await addLocalMedia();
-            } finally {
-                button.disabled = false;
+        if(present && (present.audio || present.video)) {
+            if(cameraTest) {
+                await cameraTest.stopStream();
+                await cameraTest.setAnalyser();
             }
-        } else {
-            displayMessage(
-                "Press Enable to enable your camera or microphone"
-            );
+            if(present.audio)
+                updateSettings({localMute: false});
+            await switchLocalMedia(present.audio, present.video);
         }
     }
 }
@@ -2641,6 +3026,115 @@ function groupsBase() {
     return url.slice(0, -(group.length + 1));
 }
 
+const reactionLayer = document.getElementById('reaction-layer');
+const reactionPicker = document.getElementById('reaction-picker');
+const reactionsToggle = getButtonElement('reactions-toggle');
+const reactionChoices = [...reactionPicker.querySelectorAll('button[data-reaction]')];
+const permittedReactions = new Set(reactionChoices.map(button => button.getAttribute('data-reaction')));
+/** @type {Map<string, number>} */
+const reactionSenders = new Map();
+/** @type {Map<string, number[]>} */
+const reactionWaves = new Map();
+let lastReactionSent = -Infinity;
+let lastReactionBurst = -Infinity;
+
+/** @param {boolean} open */
+function setReactionPicker(open) {
+    reactionPicker.hidden = !open;
+    reactionsToggle.setAttribute('aria-expanded', String(open));
+}
+
+function resetReactions() {
+    setReactionPicker(false);
+    reactionLayer.replaceChildren();
+    reactionSenders.clear();
+    reactionWaves.clear();
+    lastReactionSent = -Infinity;
+    lastReactionBurst = -Infinity;
+}
+
+/** @param {string} emoji */
+function showReactionBurst(emoji) {
+    const burst = document.createElement('div');
+    burst.className = 'ux-reaction-burst';
+    burst.style.setProperty('--x', `${30 + Math.random() * 40}%`);
+    const star = document.createElement('span');
+    star.className = 'ux-reaction-star';
+    star.textContent = emoji;
+    burst.appendChild(star);
+    const colors = ['#ffcd60', '#ff829c', '#a4f3cd', '#94c4ff'];
+    for(let i = 0; i < 20; i++) {
+        const spark = document.createElement('i');
+        spark.className = 'ux-reaction-spark';
+        spark.style.setProperty('--angle', `${i * 18 + Math.random() * 14}deg`);
+        spark.style.setProperty('--distance', `${3 + Math.random() * 6}rem`);
+        spark.style.setProperty('--color', colors[i % colors.length]);
+        burst.appendChild(spark);
+    }
+    reactionLayer.appendChild(burst);
+    setTimeout(() => burst.remove(), 1500);
+}
+
+/** @param {string} id @param {unknown} emoji */
+function receiveReaction(id, emoji) {
+    if(document.body.dataset.callState !== 'connected' || !serverConnection.users[id] ||
+       typeof emoji !== 'string' || !permittedReactions.has(emoji))
+        return;
+    const now = performance.now();
+    if(now - (reactionSenders.get(id) ?? -Infinity) < 100)
+        return;
+    reactionSenders.set(id, now);
+
+    const float = document.createElement('span');
+    const duration = 4200 + Math.random() * 1000;
+    float.className = 'ux-reaction';
+    float.textContent = emoji;
+    float.style.setProperty('--x', `${10 + Math.random() * 80}%`);
+    float.style.setProperty('--drift', `${Math.random() * 66 - 33}px`);
+    float.style.setProperty('--tilt', `${Math.random() * 26 - 13}deg`);
+    float.style.setProperty('--size', `${1.7 + Math.random() * .8}rem`);
+    float.style.setProperty('--duration', `${duration}ms`);
+    if(reactionLayer.childElementCount >= 56)
+        reactionLayer.querySelector('.ux-reaction')?.remove();
+    reactionLayer.appendChild(float);
+    const displayTime = window.matchMedia('(prefers-reduced-motion: reduce)').matches ?
+        2400 : duration;
+    setTimeout(() => float.remove(), displayTime);
+
+    const wave = (reactionWaves.get(emoji) || []).filter(time => now - time < 2500);
+    wave.push(now);
+    if(wave.length >= 8 && now - lastReactionBurst > 3000) {
+        lastReactionBurst = now;
+        reactionWaves.delete(emoji);
+        showReactionBurst(emoji);
+    } else {
+        reactionWaves.set(emoji, wave);
+    }
+}
+
+reactionsToggle.onclick = () => {
+    const open = reactionPicker.hidden;
+    setRoomToolsOpen(false);
+    setReactionPicker(open);
+    if(open)
+        /** @type {HTMLButtonElement} */ (reactionChoices[0]).focus();
+};
+for(const choice of reactionChoices) {
+    choice.addEventListener('click', () => {
+        const now = performance.now();
+        if(now - lastReactionSent < 165 || !serverConnection?.group ||
+           !serverConnection.permissions.includes('message'))
+            return;
+        lastReactionSent = now;
+        serverConnection.userMessage('room-reaction', '', choice.getAttribute('data-reaction'));
+    });
+}
+document.addEventListener('click', event => {
+    const target = /** @type {Node} */ (event.target);
+    if(!reactionPicker.hidden && !reactionPicker.contains(target) && !reactionsToggle.contains(target))
+        setReactionPicker(false);
+});
+
 /**
  * @param {string} id
  * @param {string} dest
@@ -2653,6 +3147,14 @@ function groupsBase() {
  */
 function gotUserMessage(id, dest, username, time, privileged, kind, error, message) {
     switch(kind) {
+    case 'room-reaction':
+        if(!dest && !error)
+            receiveReaction(id, message);
+        break;
+    case 'share-pointer':
+        if(!dest && !error)
+            receiveSharePointer(id, message);
+        break;
     case 'kicked':
     case 'error':
     case 'warning':
@@ -2690,15 +3192,27 @@ function gotUserMessage(id, dest, username, time, privileged, kind, error, messa
             console.error(`Got unprivileged message of kind ${kind}`);
             return;
         }
-        if(error) {
-            displayError(`Token operation failed: ${message}`)
-            return
-        }
-        if(typeof message !== 'object') {
-            displayError('Unexpected type for token');
+        let invitation = invitationPending;
+        if(invitation)
+            setInvitationPending(false);
+        if(error || typeof message !== 'object' || !message) {
+            if(invitation)
+                document.getElementById('invite-status').textContent = 'La création du lien a échoué.';
+            else
+                displayError(error ? 'Token operation failed: ' + message : 'Unexpected type for token');
             return;
         }
         let f = formatToken(message, false);
+        if(invitation) {
+            getInputElement('invite-link').value = f[1];
+            document.getElementById('invite-result').hidden = false;
+            document.getElementById('invite-status').textContent = 'Lien prêt à partager.';
+            if(/** @type {HTMLDialogElement} */(document.getElementById('invite-dialog')).open)
+                getButtonElement('invite-copy').focus();
+            else
+                localMessage(f[0] + ': ' + f[1]);
+            break;
+        }
         localMessage(f[0] + ': ' + f[1]);
         if('share' in navigator) {
             try {
@@ -3652,20 +4166,12 @@ commands.wall = {
 
 commands.raise = {
     description: 'raise hand',
-    f: (c, r) => {
-        serverConnection.userAction(
-            "setdata", serverConnection.id, {"raisehand": true},
-        );
-    }
+    f: () => setHandRaised(true),
 }
 
 commands.unraise = {
     description: 'unraise hand',
-    f: (c, r) => {
-        serverConnection.userAction(
-            "setdata", serverConnection.id, {"raisehand": null},
-        );
-    }
+    f: () => setHandRaised(false),
 }
 
 /** @returns {boolean} */
@@ -3988,13 +4494,13 @@ document.getElementById('loginform').onsubmit = async function(e) {
 
     setVisibility('passwordform', true);
 
-    if(getInputElement('presentboth').checked)
-        presentRequested = 'both';
-    else if(getInputElement('presentmike').checked)
-        presentRequested = 'mike';
-    else
-        presentRequested = null;
-    getInputElement('presentoff').checked = true;
+    presentRequested = {
+        audio: getInputElement('join-mic').checked,
+        video: getInputElement('join-camera').checked,
+    };
+    getInputElement('join-mic').checked = false;
+    getInputElement('join-camera').checked = false;
+    setJoinError('');
 
     // Connect to the server, gotConnected will join.
     serverConnect();
@@ -4003,138 +4509,178 @@ document.getElementById('loginform').onsubmit = async function(e) {
 
 /** @type{CameraTest} */
 let cameraTest = null;
+let testRunning = false;
 
-document.getElementById('test-camera').ontoggle = async function(e) {
-    let details = this;
-    if(!(details instanceof HTMLDetailsElement))
-        throw new Error('Unexpected type for this');
-    if(details.open) {
-        if(!cameraTest) {
-            let video = document.getElementById('test-video');
-            if(!(video instanceof HTMLVideoElement))
-                throw new Error('Bad type for video');
-            let canvas = document.getElementById('test-fft');
-            if(!(canvas instanceof HTMLCanvasElement))
-                throw new Error('Bad type for FFT canvas');
-            cameraTest = new CameraTest(
-                video, canvas,
-                getSelectElement('test-videoselect'),
-                getSelectElement('test-audioselect'),
-            );
-        }
-        try {
-            await cameraTest.setMediaChoices();
-            cameraTest.reflectSettings();
-            if(cameraTest.video.srcObject != null)
-                return;
-            await cameraTest.setStream(true);
-            await cameraTest.setAnalyser();
-        } catch(e) {
-            displayError(e);
-            await cameraTest.stopStream();
-            await cameraTest.setAnalyser();
-        }
-    } else {
-        try {
-            await cameraTest.stopStream();
-            await cameraTest.setAnalyser();
-        } catch(e) {
-            displayError(e);
-        }
-    }
+/** @returns {{audio: boolean, video: boolean}} */
+function testSelection() {
+    let mode = getSelectElement('test-mode').value;
+    return {audio: mode !== 'video', video: mode !== 'audio'};
 }
 
-getSelectElement('test-videoselect').onchange = async function(e) {
-    e.preventDefault();
-    if(!(this instanceof HTMLSelectElement))
-        throw new Error('Unexpected type for this');
-    if(!cameraTest)
-        throw new Error('Camera test not started');
-    updateSettings({video: this.value});
+function showTestStatus() {
+    let stream = /** @type {MediaStream|null} */(cameraTest?.video.srcObject);
+    let hasVideo = !!stream?.getVideoTracks().length;
+    let hasAudio = !!stream?.getAudioTracks().length;
+    let state = hasVideo && hasAudio ? 'Caméra visible. Micro détecté.' :
+                hasVideo ? 'Caméra visible.' :
+                hasAudio ? 'Micro détecté. Observe le niveau quand tu parles.' :
+                'Test arrêté.';
+    document.getElementById('test-status').textContent = state;
+    document.getElementById('test-video').hidden = !hasVideo;
+    document.getElementById('test-fft').hidden = !hasAudio;
+}
+
+getButtonElement('run-test').onclick = async function() {
+    if(testRunning)
+        return;
+    let details = /** @type {HTMLDetailsElement} */(document.getElementById('test-camera'));
+    let status = document.getElementById('test-status');
+    if(!cameraTest) {
+        cameraTest = new CameraTest(
+            /** @type {HTMLVideoElement} */(document.getElementById('test-video')),
+            /** @type {HTMLCanvasElement} */(document.getElementById('test-fft')),
+            getSelectElement('test-videoselect'),
+            getSelectElement('test-audioselect'),
+        );
+    }
+    testRunning = true;
+    getButtonElement('run-test').disabled = true;
+    status.textContent = 'Demande d’accès aux appareils…';
     try {
-        await cameraTest.setStream();
+        await cameraTest.stopStream();
         await cameraTest.setAnalyser();
-    } catch(e) {
-        displayError(e);
+        let selection = testSelection();
+        await cameraTest.setMediaChoices(selection);
+        cameraTest.reflectSettings();
+        if(!details.open)
+            return;
+        await cameraTest.setStream(true, selection);
+        if(details.open) {
+            await cameraTest.setAnalyser();
+            showTestStatus();
+        } else {
+            await cameraTest.stopStream();
+        }
+    } catch(error) {
+        console.warn(error);
+        await cameraTest.stopStream();
+        await cameraTest.setAnalyser();
+        showTestStatus();
+        if(details.open) {
+            status.textContent = error.name === 'NotAllowedError' ?
+                'Accès refusé. Autorise l’appareil dans le navigateur ou essaie l’autre appareil.' :
+                'Appareil indisponible. Essaie un autre appareil ou rejoins le salon sans le test.';
+        }
+    } finally {
+        testRunning = false;
+        getButtonElement('run-test').disabled = false;
     }
 };
 
-getSelectElement('test-audioselect').onchange = async function(e) {
-    e.preventDefault();
-    if(!(this instanceof HTMLSelectElement))
-        throw new Error('Unexpected type for this');
-    if(!cameraTest)
-        throw new Error('Camera test not started');
-    updateSettings({audio: this.value});
-    try {
-        await cameraTest.setStream();
+document.getElementById('test-camera').ontoggle = async function() {
+    if(this instanceof HTMLDetailsElement && !this.open && cameraTest) {
+        await cameraTest.stopStream();
         await cameraTest.setAnalyser();
-    } catch(e) {
-        displayError(e);
+        showTestStatus();
     }
 };
 
-document.getElementById('disconnectbutton').onclick = function(e) {
+for(let [id, key] of [['test-videoselect', 'video'], ['test-audioselect', 'audio']]) {
+    getSelectElement(id).onchange = async function() {
+        if(testRunning || !cameraTest)
+            return;
+        updateSettings({[key]: getSelectElement(id).value});
+        try {
+            await cameraTest.setStream(false, testSelection());
+            await cameraTest.setAnalyser();
+            showTestStatus();
+        } catch(error) {
+            await cameraTest.setAnalyser();
+            showTestStatus();
+            document.getElementById('test-status').textContent = 'Appareil indisponible. Relance le test avec un autre appareil.';
+        }
+    };
+}
+
+getButtonElement('disconnectbutton').onclick = function(e) {
     serverConnection.close();
-    closeNav();
+    selectCallPanel(null);
 };
 
-function openNav() {
-    document.getElementById("sidebarnav").classList.add("is-open");
+getButtonElement('hand-toggle').onclick = () => {
+    const user = serverConnection.users[serverConnection.id];
+    if(user)
+        setHandRaised(speakingTicket(user.data.raisehand) === null);
+};
+
+const callPanels = {
+    chat: {panel: 'left', button: 'chat-toggle', title: 'chat-title'},
+    participants: {panel: 'left-sidebar', button: 'sidebarCollapse', title: 'participants-title'},
+    settings: {panel: 'sidebarnav', button: 'openside', title: 'settings-title', restore: 'room-tools-toggle'},
+};
+let currentCallPanel = null;
+
+/**
+ * @param {string} name
+ * @param {boolean} [restoreFocus]
+ */
+function selectCallPanel(name, restoreFocus) {
+    let previous = currentCallPanel;
+    currentCallPanel = name === previous ? null : name;
+    let visible = currentCallPanel;
+    document.body.classList.toggle('ux-panel-open', !!visible);
+    for(let key in callPanels) {
+        let {panel, button, title} = callPanels[key];
+        let selected = key === visible;
+        document.getElementById(panel).hidden = !selected;
+        document.getElementById(button).setAttribute('aria-expanded', String(selected));
+        if(key === 'chat')
+            setVisibility(panel, selected);
+        if(selected)
+            document.getElementById(title).focus();
+    }
+    if(!visible && restoreFocus && previous)
+        document.getElementById(callPanels[previous].restore || callPanels[previous].button).focus();
+    resizePeers();
+    scheduleReconsiderDownRate();
 }
 
-function closeNav() {
-    document.getElementById("sidebarnav").classList.remove("is-open");
+for(let key in callPanels) {
+    getButtonElement(callPanels[key].button).onclick = function() {
+        setRoomToolsOpen(false);
+        selectCallPanel(key, true);
+    };
 }
-
-document.getElementById('sidebarCollapse').onclick = function(e) {
-    document.getElementById("left-sidebar").classList.toggle("active");
-    document.getElementById("mainrow").classList.toggle("full-width-active");
-};
-
-document.getElementById('openside').onclick = function(e) {
-    e.preventDefault();
-    if(document.getElementById("sidebarnav").classList.contains("is-open"))
-        closeNav();
-    else
-        openNav();
-};
-
-
-document.getElementById('clodeside').onclick = function(e) {
-    e.preventDefault();
-    closeNav();
-};
-
-document.getElementById('collapse-video').onclick = function(e) {
-    e.preventDefault();
-    setVisibility('collapse-video', false);
-    setVisibility('show-video', true);
-    hideVideo(true);
-};
-
-document.getElementById('show-video').onclick = function(e) {
-    e.preventDefault();
-    setVisibility('video-container', true);
-    setVisibility('collapse-video', true);
-    setVisibility('show-video', false);
-};
-
-document.getElementById('close-chat').onclick = function(e) {
-    e.preventDefault();
-    setVisibility('left', false);
-    setVisibility('show-chat', true);
-    resizePeers();
-};
-
-document.getElementById('show-chat').onclick = function(e) {
-    e.preventDefault();
-    setVisibility('left', true);
-    setVisibility('show-chat', false);
-    resizePeers();
-};
+getButtonElement('clodeside').onclick = () => selectCallPanel(null, true);
+getButtonElement('close-chat').onclick = () => selectCallPanel(null, true);
+getButtonElement('close-participants').onclick = () => selectCallPanel(null, true);
+document.getElementById('show-chat').onclick = () => selectCallPanel('chat', true);
+document.getElementById('collapse-video').onclick = () => selectCallPanel('chat', true);
+document.getElementById('show-video').onclick = () => selectCallPanel(null, true);
+document.addEventListener('keydown', event => {
+    if(event.key !== 'Escape' || document.querySelector('dialog[open]'))
+        return;
+    if(!toolsPanel.hidden) {
+        setRoomToolsOpen(false);
+        getButtonElement('room-tools-toggle').focus();
+        return;
+    }
+    if(!reactionPicker.hidden) {
+        setReactionPicker(false);
+        reactionsToggle.focus();
+        return;
+    }
+    if(currentCallPanel)
+        selectCallPanel(null, true);
+});
 
 async function serverConnect() {
+    if(document.body.dataset.callState === 'connecting')
+        return;
+    if(token)
+        setVisibility('login-container', true);
+    document.body.dataset.callState = 'connecting';
+    updateCallStatus();
     if(serverConnection && serverConnection.socket)
         serverConnection.close();
     serverConnection = new ServerConnection();
@@ -4162,7 +4708,8 @@ async function serverConnect() {
         await serverConnection.connect(url);
     } catch(e) {
         console.error(e);
-        displayError(`Couldn't connect to ${url}: ${e.message}`);
+        setConnected(false);
+        setJoinError('Connexion au salon impossible. Réessaie dans un instant.');
     }
 }
 
@@ -4196,7 +4743,8 @@ async function start() {
         window.history.replaceState(null, '', window.location.pathname);
     setTitle(groupStatus.displayName || capitalise(group));
 
-    addFilters();
+    await addFilters();
+    configureBackgroundImageControl();
     await setMediaChoices(false);
     reflectSettings();
 
@@ -4214,4 +4762,13 @@ async function start() {
     setViewportHeight();
 }
 
+let roomLayoutObserver = new ResizeObserver(() => {
+    const style = document.body.style;
+    style.setProperty('--ux-header-height', document.querySelector('.ux-header').getBoundingClientRect().height + 'px');
+    style.setProperty('--ux-toolbar-height', document.getElementById('call-controls').getBoundingClientRect().height + 'px');
+    resizePeers();
+});
+roomLayoutObserver.observe(document.querySelector('.ux-header'));
+roomLayoutObserver.observe(document.getElementById('call-controls'));
+initializeRoomTools();
 start();

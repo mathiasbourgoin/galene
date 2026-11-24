@@ -4,4 +4,5 @@
 /data
 /groups/**/*.json
 /static/**/*.d.ts
+/static/**/*.d.mts
 /static/third-party/tasks-vision
