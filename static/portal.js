@@ -192,13 +192,15 @@ document.getElementById('create-form').addEventListener('submit', async event =>
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ permissions: 'present' })
             }, credentials);
-            if (!isPublic) {
-                await apiRequest(`${groupPath}.wildcard-user/.password`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: guestPassword
-                }, credentials);
-            }
+            await apiRequest(`${groupPath}.wildcard-user/.password`, isPublic ? {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'wildcard' })
+            } : {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: guestPassword
+            }, credentials);
         } catch (error) {
             await apiRequest(groupPath, { method: 'DELETE' }, credentials).catch(() => {});
             throw error;
