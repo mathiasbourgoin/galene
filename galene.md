@@ -591,3 +591,12 @@ restarts.
 
 The network diagnostic reports WebRTC latency and recent incoming loss.
 See [Optional French captions](contrib/galene-stt/README.md) for transcription.
+
+Moderators can open temporary breakout rooms from **Plus → Sous-salles**.
+Name two to eight rooms, assign participants manually or in balanced groups,
+and open the rooms. Participants can join their assigned room and return to
+the main group from the meeting header. The moderator can check occupancy,
+visit rooms, and recall everyone with one action from the main group.
+Participants keep their existing login and microphone and camera choices.
+Screen sharing can be restarted from the destination room. The main group
+remains the entry point for passwords, invitations, and the waiting room.

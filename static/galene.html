@@ -46,6 +46,7 @@
             <p id="connection-status" role="status" aria-atomic="true">Avant l’appel</p>
             <button id="network-summary" class="ux-button" type="button" hidden title="Voir le diagnostic réseau"><i class="fas fa-signal" aria-hidden="true"></i> Connexion fragile</button>
             <button id="lobby-summary" class="ux-button" type="button" hidden></button>
+            <button id="breakout-shortcut" class="ux-button" type="button" hidden></button>
             <span id="captioning-status" role="status" hidden>Sous-titres actifs</span>
             <button id="media-retry" class="ux-button" type="button" hidden>Relancer les médias</button>
             <button id="invite-button" class="ux-button" type="button" hidden>
@@ -240,6 +241,7 @@
               </button>
               <button id="board-toggle" class="ux-button" type="button"><i class="fas fa-pen-ruler" aria-hidden="true"></i> Tableau</button>
               <button id="meeting-toggle" class="ux-button" type="button"><i class="fas fa-list-check" aria-hidden="true"></i> Sondages et notes</button>
+              <button id="breakout-toggle" class="ux-button" type="button" hidden><i class="fas fa-table-cells-large" aria-hidden="true"></i> Sous-salles</button>
               <button id="network-toggle" class="ux-button" type="button"><i class="fas fa-heart-pulse" aria-hidden="true"></i> Diagnostic réseau</button>
               <button id="captions-toggle" class="ux-button" type="button" aria-pressed="false"><i class="far fa-closed-captioning" aria-hidden="true"></i> Sous-titres</button>
               <button id="captioning-toggle" class="ux-button" type="button" aria-pressed="false" hidden>Activer la transcription française</button>
@@ -278,6 +280,36 @@
           <button id="board-clear" class="ux-button" type="button" hidden>Retirer le lien</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="breakout-dialog" class="ux-call-dialog" aria-labelledby="breakout-title">
+      <div class="ux-dialog-heading">
+        <h2 id="breakout-title">Sous-salles</h2>
+        <form method="dialog"><button class="ux-button">Fermer</button></form>
+      </div>
+      <p id="breakout-feedback" role="status" hidden></p>
+      <form id="breakout-plan" hidden>
+        <div class="ux-breakout-header">
+          <label for="breakout-count">Nombre de salles</label>
+          <select id="breakout-count"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select>
+          <button class="ux-button" id="breakout-balance" type="button">Répartir automatiquement</button>
+        </div>
+        <div id="breakout-names" class="ux-breakout-grid"></div>
+        <h3>Participants</h3>
+        <div id="breakout-draft-members" class="ux-breakout-people"></div>
+        <button class="ux-button ux-primary" type="submit">Ouvrir les sous-salles</button>
+      </form>
+      <section id="breakout-live" hidden>
+        <div id="breakout-cards" class="ux-breakout-grid"></div>
+        <h3>Participants</h3>
+        <div id="breakout-live-members" class="ux-breakout-people"></div>
+        <button id="breakout-recall" class="ux-button ux-leave" type="button">Rappeler tout le monde</button>
+      </section>
+      <section id="breakout-guest" hidden>
+        <h3 id="breakout-guest-title"></h3>
+        <p id="breakout-guest-detail"></p>
+        <button id="breakout-guest-action" class="ux-button ux-primary" type="button" hidden></button>
+      </section>
     </dialog>
 
     <dialog id="network-dialog" class="ux-call-dialog" aria-labelledby="network-title">
@@ -493,6 +525,7 @@ Non</textarea>
     <script src="/meeting-tools.js" defer></script>
     <script src="/share-annotations.js" defer></script>
     <script src="/shared-board.js" defer></script>
+    <script src="/breakout-rooms.js" defer></script>
     <script src="/galene.js" defer></script>
   </body>
 </html>

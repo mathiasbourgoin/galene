@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/ice/v4"
@@ -104,16 +105,19 @@ const (
 type Group struct {
 	name string
 
-	mu          sync.Mutex
-	description *Description
-	locked      *string
-	clients     map[string]Client
-	history     []ChatHistoryEntry
-	timestamp   time.Time
-	data        map[string]interface{}
-	meeting     meetingState
-	board       BoardState
-	lobby       map[string]waitingClient
+	mu             sync.Mutex
+	description    *Description
+	locked         *string
+	clients        map[string]Client
+	history        []ChatHistoryEntry
+	timestamp      time.Time
+	data           map[string]interface{}
+	meeting        meetingState
+	board          BoardState
+	lobby          map[string]waitingClient
+	breakouts      *breakoutRound
+	breakoutParent *Group
+	breakoutActive atomic.Bool
 }
 
 func (g *Group) Name() string {
@@ -193,7 +197,7 @@ func (g *Group) mayExpire() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if g.description.Public {
+	if g.description.Public || g.breakoutActive.Load() || (g.breakouts != nil && !g.breakouts.closed) {
 		return false
 	}
 	if len(g.clients) > 0 || len(g.lobby) > 0 {
@@ -505,6 +509,10 @@ func add(name string, desc *Description) (*Group, []Client, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	if g.breakoutParent != nil {
+		return g, nil, nil
+	}
+
 	notify := false
 	if desc != nil {
 		if !descriptionMatch(g.description, desc) {
@@ -565,7 +573,7 @@ func GetSubGroups(parent string) []SubGroup {
 	subgroups := make([]SubGroup, 0)
 
 	Range(func(g *Group) bool {
-		if strings.HasPrefix(g.name, prefix) {
+		if strings.HasPrefix(g.name, prefix) && g.breakoutParent == nil {
 			g.mu.Lock()
 			count := len(g.clients)
 			g.mu.Unlock()
@@ -617,6 +625,9 @@ func AddClient(group string, c Client, creds ClientCredentials) (*Group, error) 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	if g.breakoutParent != nil {
+		return nil, UserError("join this breakout room from the main group")
+	}
 	clients := g.getClientsUnlocked(nil)
 
 	if !slices.Contains(c.Permissions(), "system") {
@@ -698,13 +709,13 @@ func AddClient(group string, c Client, creds ClientCredentials) (*Group, error) 
 		return g, ErrWaitingForAdmission
 	}
 
-	if err := g.addClientUnlocked(c, clients); err != nil {
+	if err := g.addClientUnlocked(c, clients, "join"); err != nil {
 		return nil, err
 	}
 	return g, nil
 }
 
-func (g *Group) addClientUnlocked(c Client, clients []Client) error {
+func (g *Group) addClientUnlocked(c Client, clients []Client, kind string) error {
 	id := c.Id()
 	if id == "" {
 		return errors.New("client has empty id")
@@ -715,7 +726,7 @@ func (g *Group) addClientUnlocked(c Client, clients []Client) error {
 	g.clients[id] = c
 	g.timestamp = time.Now()
 
-	c.Joined(g.Name(), "join")
+	c.Joined(g.Name(), kind)
 
 	u := c.Username()
 	p := c.Permissions()

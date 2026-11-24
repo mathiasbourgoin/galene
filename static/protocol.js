@@ -164,6 +164,8 @@ function ServerConnection() {
      * @type{(this: ServerConnection) => void}
      */
     this.onconnected = null;
+    /** @type {(() => void)|null} */
+    this.onbeforemove = null;
     /**
      * onerror is called whenever a fatal error occurs.  The stream will
      * then be closed, and onclose called normally.
@@ -304,6 +306,8 @@ ServerConnection.prototype.send = function(m) {
         // send on a closed socket doesn't throw
         throw(new Error('Connection is not open'));
     }
+    if(this.group && !m.group && m.type !== 'join' && m.type !== 'handshake')
+        m = {...m, group: this.group};
     return this.socket.send(JSON.stringify(m));
 };
 
@@ -389,6 +393,8 @@ ServerConnection.prototype.connect = function(url) {
             return;
         }
         sc.lastServerMessage = new Date().valueOf();
+        if(m.group && m.type !== 'joined' && m.group !== sc.group)
+            return;
         switch(m.type) {
         case 'handshake': {
             if((m.version instanceof Array) && m.version.includes('2')) {
@@ -422,6 +428,19 @@ ServerConnection.prototype.connect = function(url) {
             sc.gotRemoteIce(m.id, m.candidate);
             break;
         case 'joined':
+            if(m.kind === 'move') {
+                sc.onbeforemove?.();
+                for(const stream of Object.values(sc.up))
+                    stream.close(false, true);
+                for(const stream of Object.values(sc.down))
+                    stream.close(false, true);
+                for(const file of Object.values(sc.transferredFiles))
+                    file.fail('Room changed');
+                for(const id of Object.keys(sc.users)) {
+                    delete sc.users[id];
+                    sc.onuser?.call(sc, id, 'delete');
+                }
+            }
             if(m.kind === 'leave' || m.kind === 'fail') {
                 for(let id in sc.users) {
                     delete(sc.users[id]);
@@ -431,7 +450,7 @@ ServerConnection.prototype.connect = function(url) {
                 sc.username = null;
                 sc.permissions = [];
                 sc.rtcConfiguration = null;
-            } else if(m.kind === 'join' || m.kind == 'change') {
+            } else if(m.kind === 'join' || m.kind === 'move' || m.kind === 'change') {
                 if(m.kind === 'join' && sc.group) {
                     throw new Error('Joined multiple groups');
                 } else if(m.kind === 'change' && m.group != sc.group) {
@@ -1236,8 +1255,9 @@ Stream.prototype.setStream = function(stream) {
  *
  * @param {boolean} [replace]
  *    - true if the stream is being replaced by another one with the same id
+ * @param {boolean} [silent] - suppress a close request after a room move
  */
-Stream.prototype.close = function(replace) {
+Stream.prototype.close = function(replace, silent) {
     let c = this;
 
     if(!c.sc) {
@@ -1252,7 +1272,7 @@ Stream.prototype.close = function(replace) {
 
     c.pc.close();
 
-    if(c.up && !replace && c.localDescriptionSent) {
+    if(c.up && !replace && !silent && c.localDescriptionSent) {
         try {
             c.sc.send({
                 type: 'close',

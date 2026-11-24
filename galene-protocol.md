@@ -160,6 +160,13 @@ values `present`, `op` and `record`.  The `status` field is a dictionary
 that contains status information about the group, and updates the data
 obtained from the `.status` URL described above.
 
+The breakout-room extension can send a `joined` message of kind `move`.
+The current connection is authenticated in the destination group. Discard
+the previous group's streams, file transfers, and membership before handling
+the destination's membership and history. The `group` field on subsequent
+messages scopes them to a group so in-flight messages from the previous group
+can be ignored.
+
 ## Maintaining group membership
 
 Whenever a user joins or leaves a group, the server will send all other

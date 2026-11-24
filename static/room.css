@@ -513,6 +513,7 @@ button:disabled { cursor: not-allowed; opacity: .68; }
     background: var(--ux-bg);
 }
 #peers {
+    inset: 0;
     min-width: 0;
     min-height: 0;
     grid-template-rows: none;
@@ -616,3 +617,17 @@ button:disabled { cursor: not-allowed; opacity: .68; }
 @media (prefers-reduced-motion: reduce) {
     #main *, #sidebarnav, #invite-dialog, .ux-call-dialog { animation: none !important; transition: none !important; }
 }
+
+#breakout-dialog { width: min(42rem, calc(100% - 1.6rem)); }
+#breakout-dialog h3 { color: var(--ux-ink); font-size: 1.05rem; margin: .65rem 0 .3rem; }
+.ux-breakout-header { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; margin-bottom: .85rem; }
+.ux-breakout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr)); gap: .6rem; }
+.ux-breakout-card { display: grid; gap: .35rem; padding: .65rem; border: 1px solid var(--ux-border); border-radius: .7rem; background: var(--ux-field); }
+.ux-breakout-card > h3 { margin: 0 !important; }
+.ux-breakout-card > p { margin: 0; color: var(--ux-muted); }
+.ux-breakout-card button { justify-self: start; }
+#breakout-dialog input, #breakout-dialog select { min-height: 40px; max-width: 100%; padding: .3rem .45rem; color: var(--ux-ink); background: var(--ux-bg); border: 1px solid var(--ux-border); border-radius: .45rem; }
+.ux-breakout-people { margin: .5rem 0 .8rem; border-top: 1px solid var(--ux-border); }
+.ux-breakout-people label { display: flex; align-items: center; justify-content: space-between; gap: .55rem; min-height: 48px; padding: .35rem 0; border-bottom: 1px solid var(--ux-border); overflow-wrap: anywhere; }
+.ux-breakout-people label > span { color: var(--ux-muted); }
+#breakout-shortcut { border-color: var(--ux-accent); }

@@ -278,6 +278,7 @@ function setConnected(connected) {
             scheduleReconsiderDownRate();
         }
     } else {
+        resetBreakouts();
         resetMeetingTools();
         resetRoomTools();
         resetReactions();
@@ -293,6 +294,7 @@ function setConnected(connected) {
         window.onresize = null;
     }
     updateCallStatus();
+    renderBreakouts();
 }
 
 /**
@@ -2680,6 +2682,7 @@ function gotUser(id, kind) {
     renderSpeakingQueue(speakingQueue());
     updateCameraOffTiles();
     reflectCaptioning();
+    renderBreakouts();
 }
 
 function displayUsername() {
@@ -2697,6 +2700,7 @@ function displayUsername() {
 }
 
 /** @type {{audio: boolean, video: boolean}|null} */
+/** @type {{audio:boolean, video:boolean, muted?:boolean}|null} */
 let presentRequested = null;
 
 /**
@@ -2795,6 +2799,7 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
         setChangePassword(null);
         return;
     case 'join':
+    case 'move':
     case 'change':
         if(probingState === 'probing') {
             probingState = 'success';
@@ -2807,7 +2812,14 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
         } else {
             token = null;
         }
-        if(kind === 'join') {
+        if(kind === 'move') {
+            resetRoomTools();
+            resetMeetingTools();
+            resetReactions();
+            resetBreakouts();
+            selectCallPanel(null);
+        }
+        if(kind === 'join' || kind === 'move') {
             setConnected(true);
             showVideo();
             document.getElementById('mainrow').focus();
@@ -2858,7 +2870,7 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
                 await cameraTest.setAnalyser();
             }
             if(present.audio)
-                updateSettings({localMute: false});
+                updateSettings({localMute: present.muted ?? false});
             await switchLocalMedia(present.audio, present.video);
         }
     }
@@ -3168,6 +3180,18 @@ document.addEventListener('click', event => {
  */
 function gotUserMessage(id, dest, username, time, privileged, kind, error, message) {
     switch(kind) {
+    case 'breakout-state':
+        if(!id && privileged)
+            receiveBreakouts(message);
+        break;
+    case 'breakout-error':
+        if(!id && privileged) {
+            const warning = 'Impossible de modifier les sous-salles. Vérifie que la session est ouverte et que le participant est toujours là.';
+            breakoutMessage(warning);
+            if(!breakoutDialog.open)
+                displayWarning(warning);
+        }
+        break;
     case 'board-state':
         if(!id && privileged)
             receiveBoardState(message);
@@ -4736,6 +4760,10 @@ async function serverConnect() {
         serverConnection.close();
     serverConnection = new ServerConnection();
     serverConnection.onconnected = gotConnected;
+    serverConnection.onbeforemove = () => {
+        const media = localMediaState();
+        presentRequested = {audio: media.audio, video: media.video, muted: !media.micOn};
+    };
     serverConnection.onerror = function(e) {
         console.error(e);
         displayError(e);
@@ -4827,4 +4855,5 @@ initializeMeetingTools();
 initializeLobby();
 initializeShareAnnotations();
 initializeSharedBoard();
+initializeBreakouts();
 start();

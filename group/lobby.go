@@ -65,5 +65,5 @@ func (g *Group) AdmitWaiting(client Client) error {
 		return UserError("too many users")
 	}
 	delete(g.lobby, client.Id())
-	return g.addClientUnlocked(client, g.getClientsUnlocked(nil))
+	return g.addClientUnlocked(client, g.getClientsUnlocked(nil), "join")
 }

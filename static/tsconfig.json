@@ -26,6 +26,7 @@
         "meeting-tools.js",
         "share-annotations.js",
         "shared-board.js",
+        "breakout-rooms.js",
         "galene.js",
         "management.js",
         "example/example.js"

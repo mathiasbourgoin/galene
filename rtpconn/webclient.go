@@ -939,6 +939,8 @@ type joinedAction struct {
 
 type meetingUpdateAction struct{ group *group.Group }
 type lobbyUpdateAction struct{ group *group.Group }
+type breakoutUpdateAction struct{ root *group.Group }
+type breakoutRecallAction struct{ room *group.Group }
 type admissionAction struct {
 	group *group.Group
 	admit bool
@@ -1168,14 +1170,14 @@ func handleAction(c *webClient, a any) error {
 		}
 
 	case pushClientAction:
-		if a.group != c.group.Name() {
-			log.Printf("got client for wrong group")
+		if c.group == nil || a.group != c.group.Name() {
 			return nil
 		}
 		perms := append([]string(nil), a.permissions...)
 		username := a.username
 		return c.write(clientMessage{
 			Type:        "user",
+			Group:       a.group,
 			Kind:        a.kind,
 			Id:          a.id,
 			Username:    &username,
@@ -1183,6 +1185,9 @@ func handleAction(c *webClient, a any) error {
 			Data:        a.data,
 		})
 	case joinedAction:
+		if a.kind != "leave" && (c.group == nil || c.group.Name() != a.group) {
+			return nil
+		}
 		var status *group.Status
 		var data map[string]interface{}
 		var g *group.Group
@@ -1209,7 +1214,7 @@ func handleAction(c *webClient, a any) error {
 		if err != nil {
 			return err
 		}
-		if a.kind == "join" {
+		if a.kind == "join" || a.kind == "move" {
 			if g == nil {
 				log.Println("g is null when joining" +
 					"this shouldn't happen")
@@ -1222,6 +1227,7 @@ func handleAction(c *webClient, a any) error {
 			for _, m := range h {
 				err := c.write(clientMessage{
 					Type:     "chathistory",
+					Group:    a.group,
 					Id:       m.Id,
 					Source:   m.Source,
 					Username: m.User,
@@ -1235,7 +1241,10 @@ func handleAction(c *webClient, a any) error {
 			}
 		}
 		if g != nil && a.kind != "leave" {
-			return c.sendLobbyState(g)
+			if err := c.sendLobbyState(g); err != nil {
+				return err
+			}
+			return c.sendBreakoutState()
 		}
 	case meetingUpdateAction:
 		if c.group == a.group {
@@ -1244,6 +1253,14 @@ func handleAction(c *webClient, a any) error {
 	case lobbyUpdateAction:
 		if c.group == a.group {
 			return c.sendLobbyState(a.group)
+		}
+	case breakoutUpdateAction:
+		if c.group != nil && c.group.BreakoutRoot() == a.root {
+			return c.sendBreakoutState()
+		}
+	case breakoutRecallAction:
+		if c.group == a.room {
+			return c.moveBreakout("")
 		}
 	case admissionAction:
 		if c.waiting != a.group {
@@ -1355,6 +1372,15 @@ func failUpConnection(c *webClient, id string, message string) error {
 	return nil
 }
 
+func closeGroupMedia(c *webClient) {
+	for _, up := range getUpConns(c) {
+		delUpConn(c, up.id, c.id, true)
+	}
+	for id := range c.down {
+		delDownConn(c, id)
+	}
+}
+
 func leaveGroup(c *webClient) {
 	if c.waiting != nil {
 		g := c.waiting
@@ -1368,22 +1394,15 @@ func leaveGroup(c *webClient) {
 		return
 	}
 
-	if c.up != nil {
-		for id := range c.up {
-			delUpConn(c, id, c.id, true)
-		}
-	}
-	if c.down != nil {
-		for id := range c.down {
-			delDownConn(c, id)
-		}
-	}
-
+	root := c.group.BreakoutRoot()
+	closeGroupMedia(c)
 	group.DelClient(c)
 	c.permissions = nil
 	c.data = nil
 	c.requested = make(map[string][]string)
 	c.group = nil
+	root.PruneBreakouts()
+	notifyBreakouts(root)
 }
 
 func closeDownConn(c *webClient, id string, message string) error {
@@ -1419,7 +1438,7 @@ func (c *webClient) Joined(group, kind string) error {
 
 func (c *webClient) sendMeetingState(g *group.Group) error {
 	return c.write(clientMessage{Type: "usermessage", Kind: "meeting-state", Dest: c.id,
-		Privileged: true, Value: g.Meeting(c)})
+		Group: g.Name(), Privileged: true, Value: g.Meeting(c)})
 }
 
 func (c *webClient) sendLobbyState(g *group.Group) error {
@@ -1427,7 +1446,7 @@ func (c *webClient) sendLobbyState(g *group.Group) error {
 		return nil
 	}
 	return c.write(clientMessage{Type: "usermessage", Kind: "lobby-state", Dest: c.id,
-		Privileged: true, Value: g.Waiting()})
+		Group: g.Name(), Privileged: true, Value: g.Waiting()})
 }
 
 func notifyLobby(g *group.Group) {
@@ -1445,6 +1464,7 @@ func (c *webClient) startGroup(g *group.Group) error {
 		return c.write(clientMessage{Type: "joined", Kind: "redirect", Group: g.Name(),
 			Username: &username, Value: redirect})
 	}
+	notifyBreakouts(g.BreakoutRoot())
 	return nil
 }
 
@@ -1458,6 +1478,9 @@ func kickClient(g *group.Group, id string, user *string, dest string, message st
 }
 
 func handleClientMessage(c *webClient, m clientMessage) error {
+	if m.Type != "join" && m.Group != "" && (c.group == nil || c.group.Name() != m.Group) {
+		return nil
+	}
 	if m.Source != "" {
 		if m.Source != c.Id() {
 			return group.ProtocolError("spoofed client id")
@@ -1679,6 +1702,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 		}
 		mm := clientMessage{
 			Type:       m.Type,
+			Group:      g.Name(),
 			Id:         id,
 			Source:     m.Source,
 			Dest:       m.Dest,
@@ -1716,6 +1740,9 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 		if g == nil {
 			return c.error(group.UserError("join a group first"))
 		}
+		if action, ok := strings.CutPrefix(m.Kind, "breakout/"); ok {
+			return c.handleBreakout(action, m.Value)
+		}
 		if action, ok := strings.CutPrefix(m.Kind, "board/"); ok {
 			if action == "state" {
 				return c.write(clientMessage{Type: "usermessage", Kind: "board-state", Dest: c.id,
@@ -1728,7 +1755,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 					Privileged: true, Value: err.Error()})
 			}
 			return broadcast(g.GetClients(nil), clientMessage{Type: "usermessage", Kind: "board-change",
-				Privileged: true, Value: change})
+				Group: g.Name(), Privileged: true, Value: change})
 		}
 		if action, ok := strings.CutPrefix(m.Kind, "meeting/"); ok {
 			data, _ := m.Value.(map[string]any)
@@ -1778,6 +1805,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 			m := clientMessage{
 				Type:       "usermessage",
 				Kind:       "clearchat",
+				Group:      g.Name(),
 				Value:      m.Value,
 				Privileged: true,
 			}
