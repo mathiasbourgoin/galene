@@ -54,26 +54,22 @@ func differs(a, b, delta uint64) bool {
 }
 
 func TestTime(t *testing.T) {
-	a := Now(48000)
-	time.Sleep(40 * time.Millisecond)
-	b := Now(48000) - a
-	if differs(b, 40*48, 160) {
-		t.Errorf("Expected %v, got %v", 4*48, b)
+	check := func(name string, clock func() uint64, hz uint32, delay time.Duration) {
+		t.Helper()
+		before := time.Now()
+		a := clock()
+		time.Sleep(delay)
+		b := clock()
+		after := time.Now()
+		max := uint64(FromDuration(after.Sub(before), hz)) + 2
+		min := uint64(FromDuration(delay, hz))
+		if b < a || b-a+2 < min || b-a > max {
+			t.Errorf("%s: elapsed %d ticks outside [%d, %d]", name, b-a, min, max)
+		}
 	}
-
-	c := Microseconds()
-	time.Sleep(4 * time.Millisecond)
-	d := Microseconds() - c
-	if differs(d, 4000, 1000) {
-		t.Errorf("Expected %v, got %v", 4000, d)
-	}
-
-	c = Jiffies()
-	time.Sleep(time.Second * 10000000 / JiffiesPerSec)
-	d = Jiffies() - c
-	if differs(d, 10000000, 1000000) {
-		t.Errorf("Expected %v, got %v", 10000000, d)
-	}
+	check("RTP", func() uint64 { return Now(48000) }, 48000, 40*time.Millisecond)
+	check("microseconds", Microseconds, 1000000, 4*time.Millisecond)
+	check("jiffies", Jiffies, JiffiesPerSec, time.Second*10000000/JiffiesPerSec)
 }
 
 func TestNTP(t *testing.T) {
