@@ -27,6 +27,7 @@
         "share-annotations.js",
         "shared-board.js",
         "breakout-rooms.js",
+        "flip-camera.js",
         "galene.js",
         "management.js",
         "example/example.js"

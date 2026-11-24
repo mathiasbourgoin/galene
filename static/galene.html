@@ -4,6 +4,10 @@
     <title>Galène</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#19332f">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <link rel="manifest" href="/site.webmanifest">
     <meta http-equiv="ScreenOrientation" content="autoRotate:disabled">
     <link rel="stylesheet" type="text/css" href="/common.css"/>
     <link rel="stylesheet" type="text/css" href="/galene.css"/>
@@ -200,6 +204,7 @@
             <button id="presentbutton" class="ux-button" type="button" aria-pressed="false">
               <i class="fas fa-video" aria-hidden="true"></i><span id="camera-label">Caméra coupée</span>
             </button>
+            <button id="flip-camera" class="ux-button" type="button" hidden title="Changer de caméra"><i class="fas fa-camera-rotate" aria-hidden="true"></i><span>Changer de caméra</span></button>
             <button id="sharebutton" class="ux-button" type="button" aria-pressed="false">
               <i class="fas fa-desktop" aria-hidden="true"></i><span id="share-label">Partager l’écran</span>
             </button>
@@ -531,5 +536,6 @@ Non</textarea>
     <script src="/shared-board.js" defer></script>
     <script src="/breakout-rooms.js" defer></script>
     <script src="/galene.js" defer></script>
+    <script src="/flip-camera.js" defer></script>
   </body>
 </html>

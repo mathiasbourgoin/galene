@@ -932,6 +932,8 @@ getInputElement('activitybox').onchange = function(e) {
     if(!(this instanceof HTMLInputElement))
         throw new Error('Unexpected type for this');
     updateSettings({activityDetection: this.checked});
+    if(!serverConnection)
+        return;
     for(let id in serverConnection.down) {
         let c = serverConnection.down[id];
         if(this.checked)
@@ -940,6 +942,12 @@ getInputElement('activitybox').onchange = function(e) {
             c.setStatsInterval(0);
             setActive(c, false);
         }
+    }
+    for(let id in serverConnection.up) {
+        let c = serverConnection.up[id];
+        c.setStatsInterval(this.checked ? activityDetectionInterval : 2000);
+        if(!this.checked)
+            setActive(c, false);
     }
 };
 
@@ -965,6 +973,22 @@ getInputElement('displayallbox').onchange = function(e) {
  */
 function gotUpStats(stats) {
     let c = this;
+
+    if(getInputElement('activitybox').checked) {
+        let maxEnergy = 0;
+        c.pc.getSenders().forEach(sender => {
+            const track = sender.track;
+            if(!track || !track.enabled || track.kind !== 'audio') return;
+            const energy = stats[track.id]?.['media-source']?.audioEnergy;
+            if(typeof energy === 'number') maxEnergy = Math.max(maxEnergy, energy);
+        });
+        if(maxEnergy > activityDetectionThreshold * activityDetectionThreshold) {
+            c.userdata.lastVoiceActivity = Date.now();
+            setActive(c, true);
+        } else if(!c.userdata.lastVoiceActivity || Date.now() - c.userdata.lastVoiceActivity > activityDetectionPeriod) {
+            setActive(c, false);
+        }
+    }
 
     let values = [];
 
@@ -993,10 +1017,8 @@ function gotUpStats(stats) {
  */
 function setActive(c, value) {
     let peer = document.getElementById('peer-' + c.localId);
-    if(value)
-        peer.classList.add('peer-active');
-    else
-        peer.classList.remove('peer-active');
+    if(peer)
+        peer.classList.toggle('peer-active', value);
 
     let user = document.getElementById('user-' + c.source);
     if(user) {
@@ -1417,7 +1439,7 @@ async function setUpStream(c, stream) {
     };
 
     c.onstats = gotUpStats;
-    c.setStatsInterval(2000);
+    c.setStatsInterval(getSettings().activityDetection ? activityDetectionInterval : 2000);
 }
 
 /**
@@ -1479,11 +1501,12 @@ function replaceCameraStream() {
     if(c) {
         let media = localMediaState();
         let settings = getSettings();
-        addLocalMedia(c.localId, {
+        return addLocalMedia(c.localId, {
             audio: media.audio && !!settings.audio,
             video: media.video && !!settings.video,
         }, true);
     }
+    return Promise.resolve();
 }
 
 /**

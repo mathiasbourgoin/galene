@@ -1,0 +1,16 @@
+services:
+  galene:
+    build: .
+    restart: unless-stopped
+    # Host networking makes WebRTC candidates use the host network directly.
+    # This Compose example is intended for Linux servers.
+    network_mode: host
+    volumes:
+      - galene-data:/var/lib/galene/data
+      - galene-groups:/var/lib/galene/groups
+      - galene-recordings:/var/lib/galene/recordings
+
+volumes:
+  galene-data:
+  galene-groups:
+  galene-recordings:

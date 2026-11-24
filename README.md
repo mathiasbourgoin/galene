@@ -17,10 +17,17 @@ server, media stack, and web client.
 | Participation | An ordered raised-hand queue with a personal position indicator, floating emoji reactions, a firework animation when reactions arrive together, and sound notifications for arrivals and raised hands |
 | Presentation | Automatic focus on a screen share, a participant filmstrip, a shared pointer, and temporary annotations with presenter-controlled access |
 | Meeting tools | A shared whiteboard in the main view with SVG export, an optional Excalidraw link, polls, supported questions that can be attached to raised hands, and shared decision notes |
-| Access and groups | A waiting room with moderator admission or admission by an existing participant, and temporary breakout rooms with manual or balanced assignments, live occupancy, and a collective return |
+| Access and groups | Global identities with room-specific permissions, a waiting room with moderator or participant admission, and temporary breakout rooms with manual or balanced assignments, live occupancy, and a collective return |
 | Connection and captions | An audio-first receive mode with an option to keep screen shares, WebRTC connection diagnostics, and optional [French captions](contrib/galene-stt/README.md) |
 | Meeting portal | Join by room name, invitation URL, or a link carrying a token; see public room attendance and participant names before joining; and create a permanent room protected by a guest password or open to the public |
 | Companion mode | Join from a second device with its microphone and incoming audio initially muted, with an option to enable audio and use the camera |
+| Mobile and devices | Switch cameras on touch devices, add a home-screen shortcut, and see local microphone activity when supported by the browser |
+
+### Credits for ideas and contributions
+
+- [Alexander's Galène fork](https://github.com/alxndr42/galene/tree/patches) contributed global identities and inspired local microphone activity detection. His original authorship is retained in the Git history.
+- [Hybrid Meeting Buddies](https://github.com/nahu02/hybrid-meeting-buddies) inspired the mobile camera switch.
+- [pfajeau/my_galene](https://github.com/pfajeau/my_galene) inspired the home-screen icons and manifest.
 
 To use companion mode, open the same room on the second device and select
 **Rejoindre en mode compagnon** before joining. The second device appears as a
@@ -102,6 +109,25 @@ participant enters directly and a person already present can admit later
 arrivals. Public room names are visible before joining; private room
 participant names are not exposed on the unauthenticated status endpoint.
 
+### Global identities
+
+An administrator can create a global identity, assign its password, and grant
+it permissions in each room separately. With a server and `galenectl` already
+configured, for example:
+
+```sh
+./galenectl create-user -user alice
+./galenectl set-password -user alice
+./galenectl create-user -group meeting -user alice -permissions present
+```
+
+The room entry grants access; a global identity by itself does not grant room
+permissions. A room-specific password takes precedence over the global one.
+Deleting a room-specific password can make the global password valid again.
+To revoke a user's access to a room, remove the room's user entry with
+`./galenectl delete-user -group meeting -user alice`. Store and back up
+`data/var/users.json` securely along with the other persistent data.
+
 ### Background effects and reverse proxy
 
 Background blur and replacement need the optional MediaPipe files and model.
@@ -116,6 +142,64 @@ assets and WebSocket paths in this fork assume deployment at the origin root.
 Serving it under a URL prefix requires corresponding proxy and asset path
 configuration; setting `proxyURL` alone does not rewrite those paths.
 Optional French captions require the separate [caption worker setup](contrib/galene-stt/README.md).
+
+### Run with Docker Compose on Linux
+
+The included Compose configuration builds the fork and runs it as an
+unprivileged user. It uses host networking so WebRTC can use the server's
+network directly. The example is intended for Linux; Docker Desktop and
+servers behind NAT need an appropriate network and TURN configuration.
+
+From the checkout, create the administrator before starting the server:
+
+```sh
+docker compose build
+docker compose run --rm --entrypoint /usr/local/bin/galenectl galene \
+  -admin-username admin initial-setup -config /var/lib/galene/data/config.json
+docker compose up -d
+```
+
+The setup prompts for the administrator password. Its client credentials are
+stored in the persistent data volume, so protect and back up that volume.
+The `galene-data`, `galene-groups`, and `galene-recordings` named volumes
+persist configuration and invitations, room definitions, and recordings.
+Galène needs write access to these directories. If replacing named volumes
+with bind mounts, make the mounted directories writable by UID and GID 10001.
+Do not delete the volumes when upgrading or recreating the container.
+
+The example serves HTTPS on TCP 8443, uses UDP 10000 for multiplexed WebRTC
+media, and uses the built-in TURN server on TCP and UDP 1194 when no external
+ICE configuration is present. Open the required ports in the server firewall.
+It creates a self-signed certificate when none exists; install a trusted
+certificate as `cert.pem` and `key.pem` in the data volume for normal browser
+use. See [upstream networking and TURN guidance](galene-install.md#advanced-configuration)
+for NAT, an external TURN server, TLS and production deployment.
+
+To include optional background effects, install the MediaPipe files and model
+into `static/third-party/tasks-vision` using the instructions linked above
+**before** `docker compose build`; rebuild the image after updating them.
+Then start the portal at `https://your-server:8443/`. To update the container
+after pulling changes, run `docker compose up -d --build`.
+
+### Automated builds and releases
+
+GitHub Actions builds the Docker image on branch pushes and pull requests without
+publishing it. Pushing a version tag such as `v1.2.3` builds and publishes a
+multi-architecture Linux image (`amd64` and `arm64`) to GHCR as
+`ghcr.io/<owner>/<repository>:v1.2.3`, and creates a GitHub Release with Linux
+archives and SHA-256 checksum files for both architectures. Archives include
+Galène, `galenectl` and the static interface. MediaPipe assets are optional and
+must be installed separately when using release archives.
+
+```sh
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The workflow uses the repository-provided `GITHUB_TOKEN`; ensure Actions can
+write packages and create releases in the repository settings. GHCR package
+visibility is managed separately on GitHub. No image or release is published
+for a pull request.
 
 ## Documentation
 

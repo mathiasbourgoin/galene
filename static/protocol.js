@@ -745,6 +745,7 @@ ServerConnection.prototype.newUpStream = function(localId) {
     let c = new Stream(this, id, localId || newLocalId(), pc, true);
     if(oldId)
         c.replace = oldId;
+    c.source = sc.id;
     c.username = sc.username;
     sc.up[id] = c;
 
@@ -1539,6 +1540,16 @@ Stream.prototype.updateStats = async function() {
                         stats[id][r.type].rate =
                         ((r.bytesSent - old[id][r.type].bytesSent) * 1000 /
                          (r.timestamp - old[id][r.type].timestamp)) * 8;
+                } else if(stid && r.type === 'media-source' && 'totalAudioEnergy' in r) {
+                    if(!stats[stid]) stats[stid] = {};
+                    stats[stid][r.type] = {
+                        timestamp: r.timestamp,
+                        totalAudioEnergy: r.totalAudioEnergy,
+                    };
+                    if(old[stid] && old[stid][r.type] && r.timestamp > old[stid][r.type].timestamp)
+                        stats[stid][r.type].audioEnergy =
+                            (r.totalAudioEnergy - old[stid][r.type].totalAudioEnergy) * 1000 /
+                            (r.timestamp - old[stid][r.type].timestamp);
                 }
             }
         }
