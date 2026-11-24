@@ -61,6 +61,7 @@ func isWSNormalError(err error) bool {
 
 type webClient struct {
 	group       *group.Group
+	waiting     *group.Group
 	addr        net.Addr
 	id          string
 	username    string
@@ -758,6 +759,12 @@ func requestedTracks(c *webClient, requested []string, tracks []conn.UpTrack) ([
 	if len(requested) == 0 {
 		return nil, false
 	}
+	if slices.Contains(c.permissions, "caption-on-demand") {
+		if c.group == nil || !c.group.CaptioningEnabled() {
+			return nil, false
+		}
+		requested = []string{"audio"}
+	}
 	var audio, video, videoLow bool
 	for _, s := range requested {
 		switch s {
@@ -928,6 +935,13 @@ type permissionsChangedAction struct{}
 type joinedAction struct {
 	group string
 	kind  string
+}
+
+type meetingUpdateAction struct{ group *group.Group }
+type lobbyUpdateAction struct{ group *group.Group }
+type admissionAction struct {
+	group *group.Group
+	admit bool
 }
 
 type kickAction struct {
@@ -1201,6 +1215,9 @@ func handleAction(c *webClient, a any) error {
 					"this shouldn't happen")
 				return nil
 			}
+			if err := c.sendMeetingState(g); err != nil {
+				return err
+			}
 			h := g.GetChatHistory()
 			for _, m := range h {
 				err := c.write(clientMessage{
@@ -1217,6 +1234,32 @@ func handleAction(c *webClient, a any) error {
 				}
 			}
 		}
+		if g != nil && a.kind != "leave" {
+			return c.sendLobbyState(g)
+		}
+	case meetingUpdateAction:
+		if c.group == a.group {
+			return c.sendMeetingState(a.group)
+		}
+	case lobbyUpdateAction:
+		if c.group == a.group {
+			return c.sendLobbyState(a.group)
+		}
+	case admissionAction:
+		if c.waiting != a.group {
+			return nil
+		}
+		if !a.admit {
+			leaveGroup(c)
+			return c.write(clientMessage{Type: "joined", Kind: "fail", Group: a.group.Name(),
+				Error: "admission-denied", Value: "admission declined"})
+		}
+		if err := a.group.AdmitWaiting(c); err != nil {
+			return c.error(err)
+		}
+		c.waiting = nil
+		notifyLobby(a.group)
+		return c.startGroup(a.group)
 	case changePermissionsAction:
 		switch a.kind {
 		case "op":
@@ -1313,6 +1356,14 @@ func failUpConnection(c *webClient, id string, message string) error {
 }
 
 func leaveGroup(c *webClient) {
+	if c.waiting != nil {
+		g := c.waiting
+		g.RemoveWaiting(c)
+		c.waiting = nil
+		c.permissions = nil
+		c.data = nil
+		notifyLobby(g)
+	}
 	if c.group == nil {
 		return
 	}
@@ -1366,6 +1417,37 @@ func (c *webClient) Joined(group, kind string) error {
 	return nil
 }
 
+func (c *webClient) sendMeetingState(g *group.Group) error {
+	return c.write(clientMessage{Type: "usermessage", Kind: "meeting-state", Dest: c.id,
+		Privileged: true, Value: g.Meeting(c)})
+}
+
+func (c *webClient) sendLobbyState(g *group.Group) error {
+	if !slices.Contains(c.permissions, "op") {
+		return nil
+	}
+	return c.write(clientMessage{Type: "usermessage", Kind: "lobby-state", Dest: c.id,
+		Privileged: true, Value: g.Waiting()})
+}
+
+func notifyLobby(g *group.Group) {
+	for _, client := range g.GetClients(nil) {
+		if target, ok := client.(*webClient); ok {
+			target.action(lobbyUpdateAction{g})
+		}
+	}
+}
+
+func (c *webClient) startGroup(g *group.Group) error {
+	c.group = g
+	if redirect := g.Description().Redirect; redirect != "" {
+		username := c.username
+		return c.write(clientMessage{Type: "joined", Kind: "redirect", Group: g.Name(),
+			Username: &username, Value: redirect})
+	}
+	return nil
+}
+
 func kickClient(g *group.Group, id string, user *string, dest string, message string) error {
 	client := g.GetClient(dest)
 	if client == nil {
@@ -1389,10 +1471,17 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 			}
 		}
 	}
+	if c.waiting != nil && m.Type != "join" && m.Type != "ping" && m.Type != "pong" {
+		return c.error(group.UserError("waiting for admission"))
+	}
 
 	switch m.Type {
 	case "join":
 		if m.Kind == "leave" {
+			if c.waiting != nil && c.waiting.Name() == m.Group {
+				leaveGroup(c)
+				return nil
+			}
 			if c.group == nil || c.group.Name() != m.Group {
 				return group.UserError("you are not joined")
 			}
@@ -1404,7 +1493,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 			return group.ProtocolError("unknown kind")
 		}
 
-		if c.group != nil {
+		if c.group != nil || c.waiting != nil {
 			return group.ProtocolError(
 				"cannot join multiple groups",
 			)
@@ -1417,6 +1506,11 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 				Token:    m.Token,
 			},
 		)
+		if errors.Is(err, group.ErrWaitingForAdmission) {
+			c.waiting = g
+			notifyLobby(g)
+			return c.write(clientMessage{Type: "joined", Kind: "waiting", Group: g.Name()})
+		}
 		if err != nil {
 			var e, s string
 			var autherr *group.NotAuthorisedError
@@ -1448,19 +1542,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 				Value:    s,
 			})
 		}
-		if redirect := g.Description().Redirect; redirect != "" {
-			// We normally redirect at the HTTP level, but the group
-			// description could have been edited in the meantime.
-			username := c.username
-			return c.write(clientMessage{
-				Type:     "joined",
-				Kind:     "redirect",
-				Group:    m.Group,
-				Username: &username,
-				Value:    redirect,
-			})
-		}
-		c.group = g
+		return c.startGroup(g)
 	case "request":
 		requested, err := parseRequested(m.Request)
 		if err != nil {
@@ -1570,6 +1652,9 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 
 		required := "message"
 		if m.Type == "chat" && m.Kind == "caption" {
+			if slices.Contains(c.permissions, "caption-on-demand") && !g.CaptioningEnabled() {
+				return nil
+			}
 			required = "caption"
 		}
 		if !slices.Contains(c.permissions, required) {
@@ -1584,7 +1669,7 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 		}
 
 		now := time.Now()
-		if m.Type == "chat" {
+		if m.Type == "chat" && m.Kind != "caption" {
 			if m.Dest == "" {
 				g.AddToChatHistory(
 					id, m.Source, m.Username,
@@ -1631,7 +1716,30 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 		if g == nil {
 			return c.error(group.UserError("join a group first"))
 		}
+		if action, ok := strings.CutPrefix(m.Kind, "meeting/"); ok {
+			data, _ := m.Value.(map[string]any)
+			if err := g.ChangeMeeting(c, action, data); err != nil {
+				return c.write(clientMessage{Type: "usermessage", Kind: "meeting-error", Dest: c.id,
+					Privileged: true, Value: err.Error()})
+			}
+			for _, client := range g.GetClients(nil) {
+				if target, ok := client.(*webClient); ok {
+					target.action(meetingUpdateAction{g})
+				}
+			}
+			return nil
+		}
 		switch m.Kind {
+		case "lobby-admit", "lobby-deny":
+			if !slices.Contains(c.permissions, "op") {
+				return c.error(group.UserError("not authorised"))
+			}
+			id, _ := m.Value.(string)
+			target, ok := g.WaitingClient(id).(*webClient)
+			if !ok {
+				return c.sendLobbyState(g)
+			}
+			target.action(admissionAction{g, m.Kind == "lobby-admit"})
 		case "clearchat":
 			if !slices.Contains(c.permissions, "op") {
 				return c.error(group.UserError("not authorised"))
@@ -1715,11 +1823,11 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 
 			sg := group.GetSubGroups(g.Name())
 			c.write(clientMessage{
-				Type:       "usermessage",
-				Kind:       "subgrouplist",
-				Dest:       c.id,
-				Time:       time.Now().Format(time.RFC3339),
-				Value:      sg,
+				Type:  "usermessage",
+				Kind:  "subgrouplist",
+				Dest:  c.id,
+				Time:  time.Now().Format(time.RFC3339),
+				Value: sg,
 			})
 		case "setdata":
 			if !slices.Contains(c.permissions, "op") {
@@ -1732,6 +1840,13 @@ func handleClientMessage(c *webClient, m clientMessage) error {
 				))
 			}
 			g.UpdateData(data)
+			if _, changed := data["captioningEnabled"]; changed {
+				for _, client := range g.GetClients(nil) {
+					if slices.Contains(client.Permissions(), "caption-on-demand") {
+						requestConns(client, g, "")
+					}
+				}
+			}
 		case "maketoken":
 			terror := func(e, m string) error {
 				return c.write(clientMessage{

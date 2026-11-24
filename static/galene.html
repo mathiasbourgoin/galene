@@ -26,6 +26,11 @@
             <button class="ux-button" id="close-participants" type="button">Fermer</button>
           </div>
           <div class="header-sep"></div>
+          <section id="lobby-controls" aria-labelledby="lobby-title" hidden>
+            <h3 id="lobby-title">Salle d’attente</h3>
+            <label><input id="lobby-enabled" type="checkbox"> Activer l’admission par un modérateur</label>
+            <ul id="lobby-list"></ul>
+          </section>
           <section id="speaking-queue" aria-labelledby="speaking-queue-title" hidden>
             <h3 id="speaking-queue-title">Ordre de passage</h3>
             <ol id="speaking-order"></ol>
@@ -39,6 +44,9 @@
               <div><span>Galène</span><h1 id="title" class="header-title">Salon</h1></div>
             </div>
             <p id="connection-status" role="status" aria-atomic="true">Avant l’appel</p>
+            <button id="network-summary" class="ux-button" type="button" hidden title="Voir le diagnostic réseau"><i class="fas fa-signal" aria-hidden="true"></i> Connexion fragile</button>
+            <button id="lobby-summary" class="ux-button" type="button" hidden></button>
+            <span id="captioning-status" role="status" hidden>Sous-titres actifs</span>
             <button id="media-retry" class="ux-button" type="button" hidden>Relancer les médias</button>
             <button id="invite-button" class="ux-button" type="button" hidden>
               <i class="fas fa-link" aria-hidden="true"></i> Inviter
@@ -73,7 +81,16 @@
               <div class="video-container invisible" id="video-container">
                 <div id="expand-video" class="expand-video">
                   <div id="peers">
-                    <div id="presentation-stage" hidden></div>
+                    <div id="presentation-stage" hidden>
+                      <section id="board-stage" aria-label="Tableau collaboratif" hidden>
+                        <header class="ux-panel-header">
+                          <strong>Tableau collaboratif</strong>
+                          <a id="board-popout" class="ux-button" target="_blank" rel="noopener noreferrer">Nouvel onglet</a>
+                          <button id="board-close-stage" class="ux-button" type="button">Revenir à l’appel</button>
+                        </header>
+                        <iframe id="board-frame" title="Tableau Excalidraw" sandbox="allow-scripts allow-same-origin allow-downloads" allow="clipboard-read; clipboard-write" referrerpolicy="no-referrer"></iframe>
+                      </section>
+                    </div>
                     <div id="participant-tiles"></div>
                   </div>
                 </div>
@@ -133,6 +150,11 @@
                     </details>
                   </section>
                   <div class="login-box">
+                    <section id="waiting-panel" hidden>
+                      <h2>Tu es dans la salle d’attente</h2>
+                      <p role="status">Un modérateur doit accepter ton entrée pour accéder aux médias et au chat.</p>
+                      <button id="waiting-cancel" class="ux-button" type="button">Quitter la salle d’attente</button>
+                    </section>
                     <form id="loginform" class="loginform" aria-labelledby="join-title">
                       <h2 id="join-title" tabindex="-1">Rejoindre le salon</h2>
                       <div id="userform">
@@ -207,7 +229,15 @@
                 <i class="fas fa-cog" aria-hidden="true"></i> Réglages
               </button>
               <button id="board-toggle" class="ux-button" type="button"><i class="fas fa-pen-ruler" aria-hidden="true"></i> Tableau</button>
+              <button id="meeting-toggle" class="ux-button" type="button"><i class="fas fa-list-check" aria-hidden="true"></i> Sondages et notes</button>
+              <button id="network-toggle" class="ux-button" type="button"><i class="fas fa-heart-pulse" aria-hidden="true"></i> Diagnostic réseau</button>
+              <button id="captions-toggle" class="ux-button" type="button" aria-pressed="false"><i class="far fa-closed-captioning" aria-hidden="true"></i> Sous-titres</button>
+              <button id="captioning-toggle" class="ux-button" type="button" aria-pressed="false" hidden>Activer la transcription française</button>
               <button id="pointer-toggle" class="ux-button" type="button" aria-pressed="false" hidden><i class="fas fa-location-arrow" aria-hidden="true"></i> Pointeur partagé</button>
+              <label id="annotation-control" hidden>Annoter le partage
+                <select id="annotation-mode"><option value="">Désactivé</option><option value="highlight">Surligneur</option><option value="arrow">Flèche</option></select>
+              </label>
+              <label id="annotation-permission" hidden><input id="allow-annotations" type="checkbox"> Autoriser les annotations des autres</label>
               <button id="low-bandwidth" class="ux-button" type="button" aria-pressed="false"><i class="fas fa-signal" aria-hidden="true"></i> Connexion faible</button>
               <label id="keep-share-row" hidden><input id="keep-share" type="checkbox" checked> Garder les écrans partagés</label>
             </div>
@@ -225,7 +255,8 @@
         <form method="dialog"><button class="ux-button" type="submit">Fermer</button></form>
       </div>
       <p id="board-status" role="status"></p>
-      <a id="board-open" class="ux-button ux-primary" target="_blank" rel="noopener noreferrer" hidden>Ouvrir le tableau partagé</a>
+      <button id="board-open" class="ux-button ux-primary" type="button" hidden>Afficher dans l’appel</button>
+      <button id="board-present" class="ux-button" type="button" hidden>Afficher pour tout le salon</button>
       <form id="board-form" hidden>
         <p>Dans Excalidraw, démarre une collaboration et copie son lien.</p>
         <a href="https://excalidraw.com/" class="ux-button" target="_blank" rel="noopener noreferrer">Ouvrir Excalidraw</a>
@@ -236,6 +267,41 @@
           <button id="board-clear" class="ux-button" type="button" hidden>Retirer le lien</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="network-dialog" class="ux-call-dialog" aria-labelledby="network-title">
+      <div class="ux-dialog-heading"><h2 id="network-title">Diagnostic réseau</h2><form method="dialog"><button class="ux-button">Fermer</button></form></div>
+      <p id="network-message" role="status"></p>
+      <dl id="network-metrics"></dl>
+      <button id="network-enable-low" class="ux-button" type="button" hidden>Activer le mode connexion faible</button>
+    </dialog>
+
+    <dialog id="meeting-dialog" class="ux-call-dialog" aria-labelledby="meeting-title">
+      <div class="ux-dialog-heading"><h2 id="meeting-title">Sondages et notes</h2><form method="dialog"><button class="ux-button">Fermer</button></form></div>
+      <p id="meeting-feedback" role="status"></p>
+      <details open>
+        <summary>Sondage</summary>
+        <div id="meeting-poll"></div>
+        <form id="meeting-create-poll" hidden>
+          <label for="poll-question">Question</label><input id="poll-question" maxlength="240" required>
+          <label for="poll-options">Réponses, une par ligne</label><textarea id="poll-options" rows="3" required>Oui
+Non</textarea>
+          <button class="ux-button ux-primary">Lancer le sondage</button>
+        </form>
+      </details>
+      <details>
+        <summary>Questions</summary>
+        <ul id="meeting-questions"></ul>
+        <form id="meeting-question-form">
+          <label for="meeting-question-text">Ta question</label><input id="meeting-question-text" maxlength="400" required>
+          <button class="ux-button">Poser la question</button>
+        </form>
+      </details>
+      <details>
+        <summary>Décisions et actions</summary>
+        <label for="meeting-notes">Notes du salon</label><textarea id="meeting-notes" maxlength="8000" rows="7" readonly></textarea>
+        <div class="ux-dialog-actions"><button id="meeting-save" class="ux-button" type="button" hidden>Publier les notes</button><button id="meeting-copy" class="ux-button" type="button">Copier les notes</button></div>
+      </details>
     </dialog>
 
     <aside id="sidebarnav" class="sidenav" hidden aria-labelledby="settings-title">
@@ -412,6 +478,9 @@
     <script src="/filter.js" defer></script>
     <script src="/camera-test.js" defer></script>
     <script src="/room-tools.js" defer></script>
+    <script src="/call-diagnostics.js" defer></script>
+    <script src="/meeting-tools.js" defer></script>
+    <script src="/share-annotations.js" defer></script>
     <script src="/galene.js" defer></script>
   </body>
 </html>

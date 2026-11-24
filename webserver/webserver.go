@@ -95,10 +95,13 @@ func Serve(address string, dataDir string) error {
 	return nil
 }
 
-func cspHeader(w http.ResponseWriter, connect string) {
+func cspHeader(w http.ResponseWriter, connect string, board bool) {
 	c := "connect-src ws: wss: 'self'; "
 	if connect != "" {
 		c = "connect-src " + connect + " ws: wss: 'self'; "
+	}
+	if board {
+		c += "frame-src https://excalidraw.com; "
 	}
 	w.Header().Add("Content-Security-Policy",
 		c+"img-src 'self'; media-src blob: 'self'; script-src 'unsafe-eval' 'self'; default-src 'self'")
@@ -210,7 +213,7 @@ func (fh *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cspHeader(w, "")
+	cspHeader(w, "", false)
 	if !strings.HasPrefix(r.URL.Path, "/") {
 		http.Error(w,
 			"internal server error", http.StatusInternalServerError)
@@ -380,7 +383,7 @@ func groupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := g.Status(false, nil)
-	cspHeader(w, status.AuthServer)
+	cspHeader(w, status.AuthServer, true)
 	serveFile(w, r, staticRoot, "galene.html")
 }
 

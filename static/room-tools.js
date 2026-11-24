@@ -5,7 +5,10 @@ const stage = document.getElementById('presentation-stage');
 let pointerEnabled = false;
 let lastPointerSent = -Infinity;
 let boardUrl = '';
+let boardPresented = false;
 let pointerTimeout;
+const boardStage = document.getElementById('board-stage');
+const boardFrame = /** @type {HTMLIFrameElement} */ (document.getElementById('board-frame'));
 
 /** @param {boolean} open */
 function setRoomToolsOpen(open) {
@@ -58,24 +61,43 @@ function excalidrawRoom(value) {
     return '';
 }
 
-/** @param {unknown} value */
-function reflectSharedBoard(value) {
+/** @param {unknown} value @param {boolean} [presented] */
+function reflectSharedBoard(value, presented) {
     const next = excalidrawRoom(value);
     const changed = next !== boardUrl;
     boardUrl = next;
     const canShare = serverConnection?.permissions.includes('op');
-    const link = /** @type {HTMLAnchorElement} */ (document.getElementById('board-open'));
     const status = document.getElementById('board-status');
-    link.hidden = !boardUrl;
-    if(boardUrl)
-        link.href = boardUrl;
-    else
-        link.removeAttribute('href');
+    document.getElementById('board-open').hidden = !boardUrl;
+    document.getElementById('board-present').hidden = !boardUrl || !canShare;
+    document.getElementById('board-present').textContent = presented ? 'Arrêter la présentation' : 'Afficher pour tout le salon';
     document.getElementById('board-form').hidden = !canShare;
     document.getElementById('board-clear').hidden = !boardUrl;
     if(changed)
         getInputElement('board-url').value = '';
     status.textContent = boardUrl ? 'Un tableau est partagé dans ce salon.' : 'Aucun tableau partagé pour le moment.';
+    if(!boardUrl || boardPresented !== !!presented || (changed && !boardStage.hidden))
+        showBoardStage(!!boardUrl && (!!presented || changed && !boardStage.hidden));
+    boardPresented = !!presented;
+}
+
+/** @param {boolean} open */
+function showBoardStage(open) {
+    if(!boardUrl)
+        open = false;
+    boardStage.hidden = !open;
+    if(open) {
+        pointerEnabled = false;
+        if(boardFrame.getAttribute('src') !== boardUrl)
+            boardFrame.src = boardUrl;
+        /** @type {HTMLAnchorElement} */ (document.getElementById('board-popout')).href = boardUrl;
+    }
+    if(!boardUrl)
+        boardFrame.removeAttribute('src');
+    if(serverConnection) {
+        showVideo();
+        resizePeers();
+    }
 }
 
 function resetRoomTools() {
@@ -95,7 +117,7 @@ function resetRoomTools() {
 function updatePresentationLayout() {
     const tiles = document.getElementById('participant-tiles');
     const peers = document.getElementById('peers');
-    const current = stage.firstElementChild;
+    const current = stage.querySelector(':scope > .peer');
     const isShare = '.peer[data-share-owner]:not(.peer-hidden):not(.ux-audio-only)';
     const own = Array.from(peers.querySelectorAll(isShare)).find(
         peer => peer.getAttribute('data-share-owner') === serverConnection.id,
@@ -108,21 +130,25 @@ function updatePresentationLayout() {
         pointerEnabled = false;
     pointerButton.setAttribute('aria-pressed', String(pointerEnabled));
 
-    const chosen = pointerEnabled ? own :
+    const chosen = !boardStage.hidden ? null : pointerEnabled ? own :
         current?.matches(isShare) ? current : tiles.querySelector(isShare);
     if(current !== chosen) {
         clearSharePointer();
         if(current) {
             current.classList.remove('peer-pointer-active');
+            for(const mark of current.querySelectorAll('.ux-annotation'))
+                mark.remove();
             tiles.appendChild(current);
         }
         if(chosen)
             stage.appendChild(chosen);
     }
     chosen?.classList.toggle('peer-pointer-active', pointerEnabled);
-    stage.hidden = !chosen;
-    peers.classList.toggle('ux-presenting', !!chosen);
-    return !!chosen;
+    const showingStage = !!chosen || !boardStage.hidden;
+    stage.hidden = !showingStage;
+    peers.classList.toggle('ux-presenting', showingStage);
+    refreshAnnotations();
+    return showingStage;
 }
 
 /** @param {HTMLElement} peer */
@@ -150,7 +176,7 @@ function clearSharePointer() {
  * @param {any} point
  */
 function receiveSharePointer(source, point) {
-    const peer = /** @type {HTMLElement} */ (stage.firstElementChild);
+    const peer = /** @type {HTMLElement} */ (stage.querySelector(':scope > .peer'));
     if(!source || peer?.dataset.shareOwner !== source)
         return;
     if(point === null) {
@@ -181,7 +207,7 @@ function receiveSharePointer(source, point) {
 function sendSharePointer(event) {
     if(!pointerEnabled || !(event.target instanceof HTMLVideoElement))
         return;
-    const peer = /** @type {HTMLElement} */ (stage.firstElementChild);
+    const peer = /** @type {HTMLElement} */ (stage.querySelector(':scope > .peer'));
     if(peer?.dataset.shareOwner !== serverConnection.id)
         return;
     const now = performance.now();
@@ -249,10 +275,28 @@ function initializeRoomTools() {
     };
     getButtonElement('board-clear').onclick = () => {
         if(serverConnection?.permissions.includes('op'))
-            serverConnection.groupAction('setdata', {sharedBoard: null});
+            serverConnection.groupAction('setdata', {sharedBoard: null, presentBoard: null});
+    };
+    getButtonElement('board-open').onclick = () => {
+        dialog.close();
+        showBoardStage(true);
+    };
+    getButtonElement('board-present').onclick = () => {
+        if(!boardUrl || !serverConnection?.permissions.includes('op'))
+            return;
+        serverConnection.groupAction('setdata', {presentBoard: !boardPresented});
+        dialog.close();
+    };
+    getButtonElement('board-close-stage').onclick = () => {
+        showBoardStage(false);
+        getButtonElement('room-tools-toggle').focus();
     };
     getButtonElement('pointer-toggle').onclick = () => {
+        if(!boardStage.hidden)
+            showBoardStage(false);
         pointerEnabled = !pointerEnabled;
+        if(pointerEnabled)
+            getSelectElement('annotation-mode').value = '';
         if(!pointerEnabled) {
             clearSharePointer();
             serverConnection.userMessage('share-pointer', '', null, true);

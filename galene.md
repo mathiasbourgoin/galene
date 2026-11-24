@@ -570,3 +570,23 @@ query parameters set.
 [1]: <galene-install.md>
 [2]: <https://github.com/jech/galene-ldap/>
 [3]: <https://github.com/jech/galene-sample-auth-server/>
+
+## Collaboration in the meeting
+
+A moderator can enable the waiting room from **Participants** and admit or
+decline each authenticated guest. Guests in the waiting room do not receive
+meeting media or chat.
+
+Under **Plus**, a moderator can publish an Excalidraw collaboration link and
+present it in the main view. Participants can return to their own meeting
+view or open the board in another tab. The screen sharer can use temporary
+arrows or highlights and decide whether other participants may annotate.
+
+The meeting tools include polls, supported questions and shared decisions.
+A question author can attach their question to their raised hand. The
+moderator publishes poll results and shared notes. Download or copy the
+board and notes if they are needed after the group state expires or the server
+restarts.
+
+The network diagnostic reports WebRTC latency and recent incoming loss.
+See [Optional French captions](contrib/galene-stt/README.md) for transcription.

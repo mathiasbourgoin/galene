@@ -111,6 +111,8 @@ type Group struct {
 	history     []ChatHistoryEntry
 	timestamp   time.Time
 	data        map[string]interface{}
+	meeting     meetingState
+	lobby       map[string]waitingClient
 }
 
 func (g *Group) Name() string {
@@ -146,6 +148,12 @@ func (g *Group) Data() map[string]interface{} {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return maps.Clone(g.data)
+}
+
+func (g *Group) CaptioningEnabled() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.data["captioningEnabled"] == true
 }
 
 func (g *Group) UpdateData(d map[string]interface{}) {
@@ -187,7 +195,7 @@ func (g *Group) mayExpire() bool {
 	if g.description.Public {
 		return false
 	}
-	if len(g.clients) > 0 {
+	if len(g.clients) > 0 || len(g.lobby) > 0 {
 		return false
 	}
 	return time.Since(g.timestamp) > maxHistoryAge(g.description)
@@ -591,7 +599,7 @@ func Delete(name string) bool {
 
 // Called with both groups.mu and g.mu taken.
 func deleteUnlocked(g *Group) bool {
-	if len(g.clients) != 0 {
+	if len(g.clients) != 0 || len(g.lobby) != 0 {
 		return false
 	}
 
@@ -670,12 +678,38 @@ func AddClient(group string, c Client, creds ClientCredentials) (*Group, error) 
 			}
 		}
 	}
+	if g.data["requireAdmission"] == true &&
+		!slices.Contains(c.Permissions(), "op") &&
+		!slices.Contains(c.Permissions(), "system") &&
+		!slices.Contains(c.Permissions(), "caption") {
+		id := c.Id()
+		if id == "" || g.clients[id] != nil || g.lobby[id].client != nil {
+			return nil, ProtocolError("duplicate or empty client id")
+		}
+		if len(g.lobby) >= 32 {
+			return nil, UserError("waiting room is full")
+		}
+		if g.lobby == nil {
+			g.lobby = make(map[string]waitingClient)
+		}
+		g.timestamp = time.Now()
+		g.lobby[id] = waitingClient{client: c, time: g.timestamp}
+		return g, ErrWaitingForAdmission
+	}
+
+	if err := g.addClientUnlocked(c, clients); err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+func (g *Group) addClientUnlocked(c Client, clients []Client) error {
 	id := c.Id()
 	if id == "" {
-		return nil, errors.New("client has empty id")
+		return errors.New("client has empty id")
 	}
 	if g.clients[id] != nil {
-		return nil, ProtocolError("duplicate client id")
+		return ProtocolError("duplicate client id")
 	}
 	g.clients[id] = c
 	g.timestamp = time.Now()
@@ -693,7 +727,7 @@ func AddClient(group string, c Client, creds ClientCredentials) (*Group, error) 
 		cc.PushClient(g.Name(), "add", id, u, p, s)
 	}
 
-	return g, nil
+	return nil
 }
 
 // called locked
@@ -744,6 +778,14 @@ func DelClient(c Client) {
 		return
 	}
 	delete(g.clients, c.Id())
+	if (g.data["captioningEnabled"] == true || g.data["presentBoard"] == true) &&
+		!slices.ContainsFunc(g.getClientsUnlocked(nil), func(client Client) bool {
+			permissions := client.Permissions()
+			return !slices.Contains(permissions, "system") && !slices.Contains(permissions, "caption-on-demand")
+		}) {
+		delete(g.data, "captioningEnabled")
+		delete(g.data, "presentBoard")
+	}
 	g.timestamp = time.Now()
 	clients := g.getClientsUnlocked(nil)
 	g.mu.Unlock()

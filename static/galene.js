@@ -216,7 +216,7 @@ function reflectSettings() {
  * @param {boolean} [force]
  */
 function hideVideo(force) {
-    if(!force && document.querySelector('#peers .peer:not(.peer-hidden)'))
+    if(!force && (document.querySelector('#peers .peer:not(.peer-hidden)') || !boardStage.hidden))
         return;
     setVisibility('video-container', false);
     document.getElementById('empty-room').hidden =
@@ -228,7 +228,7 @@ function hideVideo(force) {
  * Show the video pane.
  */
 function showVideo() {
-    let hasmedia = !!document.querySelector('#peers .peer:not(.peer-hidden)');
+    let hasmedia = !!document.querySelector('#peers .peer:not(.peer-hidden)') || !boardStage.hidden;
     setVisibility('video-container', hasmedia);
     document.getElementById('empty-room').hidden = hasmedia ||
         document.body.dataset.callState !== 'connected';
@@ -263,6 +263,8 @@ function setConnected(connected) {
     document.getElementById(connected ? 'call-video-effects' : 'lobby-video-effects')
         .appendChild(document.getElementById('filterform'));
     document.getElementById('call-controls').hidden = !connected;
+    monitorCallDiagnostics(connected);
+    setWaitingRoom(false);
     if(connected) {
         clearChat();
         let testCamera =  /** @type{HTMLDetailsElement} */
@@ -276,6 +278,7 @@ function setConnected(connected) {
             scheduleReconsiderDownRate();
         }
     } else {
+        resetMeetingTools();
         resetRoomTools();
         resetReactions();
         renderSpeakingQueue([]);
@@ -536,6 +539,8 @@ function updateCallStatus() {
     let canRetryMedia = false;
     if(state === 'connecting') {
         label = 'Connexion au salon…';
+    } else if(state === 'waiting') {
+        label = 'En salle d’attente';
     } else if(state === 'connected') {
         let streams = [...Object.keys(serverConnection.up).map(id => serverConnection.up[id]),
                        ...Object.keys(serverConnection.down).map(id => serverConnection.down[id])];
@@ -2434,17 +2439,19 @@ function speakingQueue() {
         .sort((a, b) => a.ticket - b.ticket || (a.id < b.id ? -1 : 1));
 }
 
-/** @param {boolean} raised */
-function setHandRaised(raised) {
+/** @param {boolean} raised @param {string} [question] */
+function setHandRaised(raised, question) {
     const queue = speakingQueue();
-    if(raised === queue.some(entry => entry.id === serverConnection.id))
+    const own = queue.find(entry => entry.id === serverConnection.id);
+    if(raised === !!own && !question)
         return;
     // Put a new request after the last visible one. Simultaneous requests
     // can get the same ticket and are ordered consistently by participant ID.
     const last = queue[queue.length - 1];
     const ticket = last ? Math.min(last.ticket + 1, Number.MAX_SAFE_INTEGER) : 1;
     serverConnection.userAction('setdata', serverConnection.id, {
-        raisehand: raised ? ticket : null,
+        raisehand: raised ? own?.ticket ?? ticket : null,
+        speakingQuestion: raised && question ? question : null,
     });
 }
 
@@ -2459,6 +2466,12 @@ function renderSpeakingQueue(queue) {
         if(id === ownId) {
             item.classList.add('ux-own-turn');
             item.append(' (toi)');
+        }
+        if(typeof user.data.speakingQuestion === 'string' && user.data.speakingQuestion.length <= 400) {
+            const question = document.createElement('small');
+            question.className = 'ux-speaking-question';
+            question.textContent = user.data.speakingQuestion;
+            item.appendChild(question);
         }
         return item;
     }));
@@ -2666,6 +2679,7 @@ function gotUser(id, kind) {
     badge.textContent = count ? String(count) : '';
     renderSpeakingQueue(speakingQueue());
     updateCameraOffTiles();
+    reflectCaptioning();
 }
 
 function displayUsername() {
@@ -2748,13 +2762,18 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
     if(this !== serverConnection)
         return;
     switch(kind) {
+    case 'waiting':
+        presentRequested = present;
+        setWaitingRoom(true);
+        return;
     case 'fail':
         if(probingState === 'probing' && error === 'need-username') {
             probingState = 'need-username';
             setVisibility('passwordform', false);
         } else {
             token = null;
-            setJoinError(error === 'not-authorised' || /not authorised/i.test(message || '') ?
+            setJoinError(error === 'admission-denied' ? 'Le modérateur a refusé ton entrée.' :
+                error === 'not-authorised' || /not authorised/i.test(message || '') ?
                 'Accès refusé. Vérifie le nom et le mot de passe du salon.' :
                 'Impossible de rejoindre le salon. ' + (message || 'Réessaie.'));
             getInputElement('password').focus();
@@ -2797,7 +2816,9 @@ async function gotJoined(kind, group, perms, status, data, error, message) {
         for(let key in status)
             groupStatus[key] = status[key];
         setTitle((status && status.displayName) || capitalise(group));
-        reflectSharedBoard(data?.sharedBoard);
+        reflectSharedBoard(data?.sharedBoard, data?.presentBoard === true);
+        reflectLobbyEnabled(data?.requireAdmission);
+        reflectCaptioning(data?.captioningEnabled === true);
         displayUsername();
         setButtonsVisibility();
         setChangePassword(pwAuth && !!groupStatus.canChangePassword &&
@@ -3147,6 +3168,18 @@ document.addEventListener('click', event => {
  */
 function gotUserMessage(id, dest, username, time, privileged, kind, error, message) {
     switch(kind) {
+    case 'meeting-state':
+        if(!id && privileged)
+            reflectMeetingState(message);
+        break;
+    case 'meeting-error':
+        if(!id && privileged)
+            showMeetingError(message);
+        break;
+    case 'lobby-state':
+        if(!id && privileged && serverConnection.permissions.includes('op'))
+            reflectWaitingGuests(message);
+        break;
     case 'room-reaction':
         if(!dest && !error)
             receiveReaction(id, message);
@@ -3154,6 +3187,10 @@ function gotUserMessage(id, dest, username, time, privileged, kind, error, messa
     case 'share-pointer':
         if(!dest && !error)
             receiveSharePointer(id, message);
+        break;
+    case 'share-annotation':
+        if(!dest && !error)
+            receiveShareAnnotation(id, message);
         break;
     case 'kicked':
     case 'error':
@@ -3409,7 +3446,8 @@ let lastMessage = {};
  */
 function addToChatbox(id, peerId, dest, nick, time, privileged, history, kind, message) {
     if(kind === 'caption') {
-        displayCaption(message);
+        if(showCaptions && !history)
+            displayCaption(message);
         return;
     }
 
@@ -4771,4 +4809,8 @@ let roomLayoutObserver = new ResizeObserver(() => {
 roomLayoutObserver.observe(document.querySelector('.ux-header'));
 roomLayoutObserver.observe(document.getElementById('call-controls'));
 initializeRoomTools();
+initializeCallDiagnostics();
+initializeMeetingTools();
+initializeLobby();
+initializeShareAnnotations();
 start();
