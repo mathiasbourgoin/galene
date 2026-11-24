@@ -4,7 +4,7 @@
     <title>Galène · Réunions</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#122b28">
+    <meta name="theme-color" content="#f6f5ef">
     <link rel="stylesheet" href="/common.css">
     <link rel="stylesheet" href="/portal.css">
     <link rel="author" href="https://www.irif.fr/~jch/">
@@ -16,46 +16,43 @@
           <span class="brand-icon" aria-hidden="true">◉</span>
           <span><strong>Galène</strong><small>Visioconférence</small></span>
         </a>
-        <span class="secure-note"><span aria-hidden="true">●</span> Réunions privées ou publiques</span>
+        <a class="header-link" href="#public-section">Salons publics</a>
       </header>
 
       <section class="welcome" aria-labelledby="welcome-title">
-        <p class="eyebrow">SIMPLE · DIRECT · CONFIDENTIEL</p>
         <h1 id="welcome-title">On se retrouve ?</h1>
-        <p>Rejoignez une réunion avec son lien ou son identifiant, ou créez un salon.</p>
+        <p>Un lien ou un nom de salon suffit pour rejoindre votre réunion.</p>
       </section>
 
       <div class="portal-grid">
         <section class="card join-card" aria-labelledby="join-title">
           <div class="card-heading">
-            <span class="step">01</span>
-            <div><h2 id="join-title">Rejoindre une réunion</h2><p>Collez un lien d’invitation ou saisissez le nom du salon.</p></div>
+            <div><h2 id="join-title">Rejoindre une réunion</h2></div>
           </div>
           <form id="join-form">
             <label for="room-link">Lien ou identifiant du salon</label>
             <div class="input-action">
-              <input id="room-link" name="room" type="text" placeholder="ex. reunion-equipe ou lien d’invitation" autocomplete="url" required>
+              <input id="room-link" name="room" type="text" placeholder="ex. reunion-equipe ou lien d’invitation" autocomplete="url" aria-describedby="join-hint" required>
               <button class="button primary" id="join-button" type="submit">Rejoindre <span aria-hidden="true">→</span></button>
             </div>
-            <p class="field-hint">Les liens avec jeton d’invitation sont acceptés. Le mot de passe du salon sera demandé à l’entrée.</p>
+            <p class="field-hint" id="join-hint">Si le salon est protégé, son mot de passe vous sera demandé à l’entrée.</p>
             <p class="form-message" id="join-message" role="status" aria-live="polite"></p>
           </form>
 
           <div class="public-section" id="public-section">
-            <div class="section-divider"><span>Ou choisir un salon public</span></div>
+            <h3 class="section-divider">Salons publics</h3>
             <div id="public-groups" class="public-groups" aria-live="polite"><p class="muted">Chargement des salons…</p></div>
           </div>
         </section>
 
         <section class="card create-card" aria-labelledby="create-title">
           <div class="card-heading">
-            <span class="step">02</span>
             <div><h2 id="create-title">Créer un salon</h2><p>Choisissez un nom et partagez le lien avec vos invités.</p></div>
           </div>
           <form id="create-form">
             <label for="new-room">Nom du salon</label>
-            <div class="slug-input"><span aria-hidden="true">/</span><input id="new-room" name="room" type="text" placeholder="ma-reunion" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{1,62}" minlength="2" maxlength="63" required></div>
-            <p class="field-hint">2 à 63 caractères. Lettres, chiffres, tirets et soulignés.</p>
+            <div class="slug-input"><span aria-hidden="true">/</span><input id="new-room" name="room" type="text" placeholder="ma-reunion" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{1,62}" minlength="2" maxlength="63" aria-describedby="slug-hint" required></div>
+            <p class="field-hint" id="slug-hint">2 à 63 caractères. Lettres, chiffres, tirets et soulignés.</p>
 
             <label for="room-title">Titre affiché <span class="optional">facultatif</span></label>
             <input id="room-title" name="title" type="text" maxlength="100" placeholder="Réunion d’équipe">

@@ -3,11 +3,11 @@
     color-scheme: dark;
     --ux-ink: #edf9f2;
     --ux-muted: #b7cdc3;
-    --ux-bg: #102423;
-    --ux-surface: #18312f;
-    --ux-field: #223e39;
-    --ux-border: #65837a;
-    --ux-accent: #bbebcf;
+    --ux-bg: #101d1a;
+    --ux-surface: #1a2b26;
+    --ux-field: #253b32;
+    --ux-border: #71887b;
+    --ux-accent: #c6efce;
     --ux-on-accent: #142e24;
     --ux-panel: min(24rem, 100vw);
 
@@ -105,7 +105,7 @@ button:disabled { cursor: not-allowed; opacity: .68; }
     overflow-wrap: anywhere;
     white-space: normal;
     text-align: left;
-    font-size: 1.05rem;
+    font-size: 1.18rem;
     line-height: 1.2;
 }
 
@@ -176,14 +176,14 @@ button:disabled { cursor: not-allowed; opacity: .68; }
     height: auto;
     margin: 0;
     padding: clamp(.85rem, 4vw, 3.5rem);
-    background: #102423;
+    background: var(--ux-bg);
 }
 
 .ux-prejoin {
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-items: start;
-    gap: clamp(.75rem, 3vw, 2.5rem);
+    gap: clamp(.75rem, 2vw, 1.5rem);
     width: min(62rem, 100%);
     margin: auto;
 }
@@ -197,8 +197,9 @@ button:disabled { cursor: not-allowed; opacity: .68; }
     color: var(--ux-ink);
 }
 
-.ux-prejoin .login-box { width: auto; min-width: 0; height: auto; box-shadow: none; }
+.ux-prejoin .login-box { border-top: 3px solid var(--ux-accent); width: auto; min-width: 0; height: auto; box-shadow: none; }
 .ux-eyebrow { color: var(--ux-accent); font-size: .8rem; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+.ux-welcome #test-camera { padding-top: 1rem; border-top: 1px solid var(--ux-border); }
 .ux-welcome h2 { font: 400 clamp(2rem, 5vw, 3rem)/1.1 Georgia, serif; margin: .55rem 0; }
 .ux-welcome p, #test-status, .ux-empty p { color: var(--ux-muted); }
 .ux-prejoin form { margin: 0; color: var(--ux-ink); }
@@ -619,7 +620,7 @@ button:disabled { cursor: not-allowed; opacity: .68; }
 }
 
 #breakout-dialog { width: min(42rem, calc(100% - 1.6rem)); }
-#breakout-dialog h3 { color: var(--ux-ink); font-size: 1.05rem; margin: .65rem 0 .3rem; }
+#breakout-dialog h3 { color: var(--ux-ink); font-size: 1.18rem; margin: .65rem 0 .3rem; }
 .ux-breakout-header { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; margin-bottom: .85rem; }
 .ux-breakout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr)); gap: .6rem; }
 .ux-breakout-card { display: grid; gap: .35rem; padding: .65rem; border: 1px solid var(--ux-border); border-radius: .7rem; background: var(--ux-field); }
