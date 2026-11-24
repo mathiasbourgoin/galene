@@ -2656,7 +2656,52 @@ function delUser(id) {
  * @param {string} id
  * @param {string} kind
  */
+const notifiedHands = new Set();
+let notificationAudio = null;
+let notificationsReadyAt = 0;
+
+function playMeetingNotice(hand) {
+    try {
+        notificationAudio = notificationAudio || new AudioContext();
+        if(notificationAudio.state !== 'running')
+            return;
+        const oscillator = notificationAudio.createOscillator();
+        const gain = notificationAudio.createGain();
+        const now = notificationAudio.currentTime;
+        oscillator.frequency.value = hand ? 660 : 480;
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.045, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+        oscillator.connect(gain).connect(notificationAudio.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.23);
+    } catch(e) {
+        console.warn('Notification audio unavailable', e);
+    }
+}
+document.addEventListener('click', () => {
+    try {
+        notificationAudio = notificationAudio || new AudioContext();
+        if(notificationAudio.state === 'suspended')
+            notificationAudio.resume().catch(() => {});
+    } catch(e) { /* Audio is optional. */ }
+}, {passive: true});
+
 function gotUser(id, kind) {
+    const other = id !== serverConnection.id && !serverConnection.users[id]?.permissions?.includes('system');
+    if(kind === 'add' && other) {
+        if(Date.now() > notificationsReadyAt && notificationsReadyAt)
+            playMeetingNotice(false);
+    }
+    if(id === serverConnection.id && kind === 'add')
+        notificationsReadyAt = Date.now() + 3000;
+    if(kind === 'change' && other) {
+        const raised = speakingTicket(serverConnection.users[id]?.data?.raisehand) !== null;
+        if(raised && !notifiedHands.has(id))
+            playMeetingNotice(true);
+        if(raised) notifiedHands.add(id); else notifiedHands.delete(id);
+    }
+    if(kind === 'delete') notifiedHands.delete(id);
     switch(kind) {
     case 'add':
         addUser(id, serverConnection.users[id]);

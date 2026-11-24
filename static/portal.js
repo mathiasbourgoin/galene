@@ -94,6 +94,10 @@ async function listPublicGroups() {
             const title = document.createElement('strong');
             title.textContent = group.displayName || group.name;
             details.append(title);
+            const count = document.createElement('small');
+            const n = Number.isInteger(group.clientCount) ? group.clientCount : 0;
+            count.textContent = n === 0 ? 'Salle vide' : `${n} ${n === 1 ? 'personne présente' : 'personnes présentes'}`;
+            details.append(count);
             if (group.description) {
                 const description = document.createElement('small');
                 description.textContent = group.description;
@@ -223,3 +227,4 @@ document.getElementById('create-form').addEventListener('submit', async event =>
 });
 
 listPublicGroups();
+setInterval(listPublicGroups, 30000);
