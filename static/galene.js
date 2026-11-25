@@ -3287,7 +3287,7 @@ function gotUserMessage(id, dest, username, time, privileged, kind, error, messa
             showMeetingError(message);
         break;
     case 'lobby-state':
-        if(!id && privileged && serverConnection.permissions.includes('op'))
+        if(!id && privileged && (serverConnection.permissions.includes('op') || groupStatus.memberAdmission))
             reflectWaitingGuests(message);
         break;
     case 'room-reaction':
